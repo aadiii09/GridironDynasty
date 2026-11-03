@@ -66,7 +66,8 @@ end
 function Npc.new(slotId, side, card, info, primary, secondary, parent)
 	local self = setmetatable({}, Npc)
 	self.slot = slotId
-	self.side = side -- "Offense" (yours) / "Defense" (CPU)
+	self.side = side -- "Offense" / "Defense"
+	self.info = info or { last = "" }
 	self.card = card
 	self.attrs = card.attrs
 	self.speed = MatchConfig.SpeedFor(card.attrs.SPD)
@@ -135,6 +136,9 @@ function Npc:Velocity()
 end
 
 function Npc:Hide(hidden)
+	if hidden and self.hidden then
+		return
+	end
 	self.hidden = hidden
 	for _, d in self.model:GetDescendants() do
 		if d:IsA("BasePart") then

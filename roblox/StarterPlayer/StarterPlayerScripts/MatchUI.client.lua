@@ -153,6 +153,12 @@ local function clearControls()
 	end
 end
 
+local function switchButton()
+	return button({ Text = "SWITCH  [Q]", Size = UDim2.fromOffset(150, 56), BackgroundColor3 = Color3.fromRGB(176, 92, 255), TextColor3 = WHITE }, function()
+		MatchAction:FireServer("switch")
+	end)
+end
+
 local function render()
 	local s = state
 	if not s then
@@ -162,11 +168,10 @@ local function render()
 	cpuLabel.Text = string.upper(s.opponent.name) .. "  " .. s.cpu
 	cpuLabel.TextColor3 = Color3.fromHex(s.opponent.secondary)
 	local ordinal = ({ "1st", "2nd", "3rd", "4th" })[s.down] or (s.down .. "th")
-	situation.Text = ("%s & %s  |  %s  |  Drive %d/%d  |  You %d vs %d"):format(ordinal, s.toGo, s.spot, math.min(s.drive, s.drives), s.drives, s.ratings.you.ovr, s.ratings.cpu.ovr)
+	local userBall = s.possession == "user"
+	situation.Text = ("%s  |  %s & %s  |  %s  |  Drive %d/%d"):format(userBall and "YOUR BALL" or string.upper(s.opponent.name) .. " BALL", ordinal, s.toGo, s.spot, math.min(s.drive, s.drives), s.drives)
 	if s.phase == "final" then
 		situation.Text = ("FINAL  |  Team rating: You %d vs %d"):format(s.ratings.you.ovr, s.ratings.cpu.ovr)
-	elseif s.phase == "cpu" then
-		situation.Text = string.upper(s.opponent.name) .. " BALL  |  Drive " .. math.min(s.drive, s.drives) .. "/" .. s.drives
 	end
 
 	clearControls()
@@ -184,6 +189,27 @@ local function render()
 			end)
 			b.Parent = controls
 		end
+	elseif s.phase == "defcall" then
+		hint.Text = ("Call a defense (keys 1-3)  -  you're playing %s %s, Q to switch"):format(s.control and s.control.pos or "", s.control and s.control.name or "")
+		for i, call in MatchConfig.DefenseCalls do
+			local b = button({ Text = "", Size = UDim2.fromOffset(220, 100), BackgroundColor3 = i == 3 and Color3.fromRGB(255, 90, 90) or Color3.fromRGB(64, 160, 255) })
+			text({ Text = ("[%d] %s"):format(i, call.name), FontFace = FONT_HEAVY, TextColor3 = BG, Size = UDim2.new(1, 0, 0.42, 0) }).Parent = b
+			text({ Text = call.desc, FontFace = FONT_MED, TextColor3 = BG, TextWrapped = true, Size = UDim2.new(1, 0, 0.5, 0), Position = UDim2.fromScale(0, 0.48) }).Parent = b
+			b.Activated:Connect(function()
+				MatchAction:FireServer("defcall", call.id)
+			end)
+			b.Parent = controls
+		end
+		switchButton().Parent = controls
+	elseif s.phase == "presnap" and not userBall then
+		hint.Text = ("You're the %s %s. Space when ready  -  Q to switch player"):format(s.control and s.control.pos or "", s.control and s.control.name or "")
+		button({ Text = "READY  [SPACE]", Size = UDim2.fromOffset(240, 70) }, function()
+			MatchAction:FireServer("snap")
+		end).Parent = controls
+		switchButton().Parent = controls
+	elseif s.phase == "live" and not userBall then
+		hint.Text = "Run into the ball carrier to tackle. Get under a throw to intercept. Q = switch to the defender nearest the ball"
+		switchButton().Parent = controls
 	elseif s.phase == "presnap" then
 		hint.Text = s.play == "run" and "Snap it: you'll take the handoff and run" or "Snap it, then throw with keys 1-4 (yellow tags) or tap a receiver button"
 		button({ Text = "SNAP  [SPACE]", Size = UDim2.fromOffset(260, 70) }, function()
@@ -250,7 +276,11 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		return
 	end
 	local n = keyNumbers[input.KeyCode]
-	if state.phase == "playcall" and n and MatchConfig.Plays[n] then
+	if input.KeyCode == Enum.KeyCode.Q and state.possession == "cpu" then
+		MatchAction:FireServer("switch")
+	elseif state.phase == "defcall" and n and MatchConfig.DefenseCalls[n] then
+		MatchAction:FireServer("defcall", MatchConfig.DefenseCalls[n].id)
+	elseif state.phase == "playcall" and n and MatchConfig.Plays[n] then
 		MatchAction:FireServer("call", MatchConfig.Plays[n].id)
 	elseif state.phase == "presnap" and input.KeyCode == Enum.KeyCode.Space then
 		MatchAction:FireServer("snap")

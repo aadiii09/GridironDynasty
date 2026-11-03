@@ -69,20 +69,35 @@ function Field.new(homeColor, awayColor)
 	return self
 end
 
+-- Coordinates are always in the frame of the team with the ball: y = studs from THEIR own
+-- goal line toward the goal they attack. When the CPU has the ball, `flipped` mirrors the
+-- frame so the CPU drives toward your end zone.
 function Field:ToWorld(x, y, h)
+	if self.flipped then
+		x, y = -x, MatchConfig.FieldLength() - y
+	end
 	return self.origin + Vector3.new(x, GROUND_TOP + (h or 0), -y)
 end
 
--- Field coords (x, y) of a world position
+-- Field coords (x, y) of a world position, in the offense's frame
 function Field:ToField(pos)
 	local rel = pos - self.origin
-	return rel.X, -rel.Z
+	local x, y = rel.X, -rel.Z
+	if self.flipped then
+		x, y = -x, MatchConfig.FieldLength() - y
+	end
+	return x, y
+end
+
+-- World direction the offense is attacking
+function Field:Downfield()
+	return self.flipped and Vector3.new(0, 0, 1) or Vector3.new(0, 0, -1)
 end
 
 -- Facing downfield (for the offense) or upfield (for the defense)
 function Field:CFrameAt(x, y, h, facingDownfield)
 	local p = self:ToWorld(x, y, h)
-	local dir = facingDownfield and Vector3.new(0, 0, -1) or Vector3.new(0, 0, 1)
+	local dir = facingDownfield and self:Downfield() or -self:Downfield()
 	return CFrame.lookAt(p, p + dir)
 end
 

@@ -79,6 +79,22 @@ for _, play in MatchConfig.Plays do
 	MatchConfig.PlaysById[play.id] = play
 end
 
+-- Defensive calls (yours when the CPU has the ball; the CPU picks one when you have it)
+MatchConfig.DefenseCalls = {
+	{ id = "man", name = "MAN COVERAGE", desc = "Every receiver is shadowed. Solid against everything" },
+	{ id = "zone", name = "DEEP ZONE", desc = "Corners stay over the top: no deep balls, gives up short ones" },
+	{ id = "blitz", name = "BLITZ", desc = "Both linebackers rush the QB: fast pressure, open middle" },
+}
+MatchConfig.DefenseCallsById = {}
+for _, call in MatchConfig.DefenseCalls do
+	MatchConfig.DefenseCallsById[call.id] = call
+end
+
+-- Which defender you control when the CPU has the ball (Q switches during the play)
+-- You're a free player: if you control someone with a man assignment, the AI safety takes his man.
+MatchConfig.DefaultControl = "S"
+MatchConfig.ControlCycle = { "S", "LB1", "LB2", "CB1", "CB2", "DL1", "DL2" }
+
 -- Card attribute -> movement speed (studs/second)
 function MatchConfig.SpeedFor(spd)
 	return 11 + math.clamp((spd or 50) - 40, 0, 60) * 0.21 -- 40 -> 11, 70 -> 17.3, 99 -> 23.4

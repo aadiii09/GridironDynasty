@@ -1,10 +1,15 @@
--- MatchService (server): solo 7v7 games vs an AI team.
+-- MatchService (server): solo 7v7 games vs an AI team. Both sides are played live.
 --
--- You play offense live: pick a play, snap, then throw (keys 1-4) or hand off. After a catch
--- or handoff your avatar takes over the ball carrier. Every NPC moves and plays by its card:
--- SPD = speed, CTH = catching, COV = coverage reaction, PRS vs BLK = pass rush vs blocking,
--- TAK vs CAR/AGI = tackling vs breaking tackles, THP/THA = throw speed and accuracy.
--- The CPU's own possessions are simulated from team ratings (playable defense comes later).
+-- Your ball: pick a play, snap, throw (keys 1-4) or hand off; after a catch/handoff your avatar
+--   takes over the ball carrier.
+-- CPU ball: pick a defense (man / deep zone / blitz) and play one defender (Q switches to the
+--   defender nearest the ball). The CPU QB reads coverage and throws to the open man; its
+--   ball carriers dodge tacklers.
+-- Every player moves and plays by his card: SPD = speed, CTH = catching, COV = coverage reaction,
+-- PRS vs BLK = pass rush vs blocking, TAK vs CAR/AGI = tackling vs breaking tackles,
+-- THP/THA = throw speed and accuracy.
+--
+-- Field coordinates are always in the frame of the team with the ball (see Field.lua).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -26,6 +31,9 @@ local HALF_W = MatchConfig.HalfWidth()
 local TACKLE_RANGE = 3.2
 local USER_PRIMARY = Color3.fromRGB(20, 22, 30)
 local USER_SECONDARY = Color3.fromRGB(46, 255, 140)
+local GREEN = Color3.fromRGB(46, 255, 140)
+local RED = Color3.fromRGB(255, 90, 90)
+local GOLD = Color3.fromRGB(255, 214, 40)
 
 local remotes
 local matches = {} -- [Player] = match
@@ -41,6 +49,21 @@ end
 
 local function hdist(a, b)
 	return flat(a - b).Magnitude
+end
+
+local function weighted(options)
+	local total = 0
+	for _, o in options do
+		total += o[2]
+	end
+	local roll = rng:NextNumber(0, total)
+	for _, o in options do
+		roll -= o[2]
+		if roll <= 0 then
+			return o[1]
+		end
+	end
+	return options[#options][1]
 end
 
 local function fillerCard(pos)
@@ -75,7 +98,6 @@ local function cpuSquad(targetOvr)
 		local best, bestScore
 		for _, card in all do
 			if card.program == "Base" and card.pos == slot.pos and not usedPid[card.pid] then
-				-- prefer this team's players, then closeness to the wanted rating
 				local score = math.abs(card.ovr - want) + (card.team == team.id and 0 or 6) + rng:NextNumber(0, 2)
 				if not bestScore or score < bestScore then
 					best, bestScore = card, score
@@ -100,42 +122,7 @@ local function ratingsFor(cards)
 	end)
 end
 
--- State to client ------------------------------------------------------------------------
-
-local function sendState(m, message, color)
-	local targets = {}
-	for i, slotId in MatchConfig.Targets do
-		local route = m.call and m.call.routes[slotId]
-		local unit = m.units.Offense[slotId]
-		table.insert(targets, {
-			key = i,
-			slot = slotId,
-			pos = unit.card.pos,
-			name = string.upper(m.userInfos[slotId].last or ""),
-			available = type(route) == "table",
-		})
-	end
-	remotes.MatchState:FireClient(m.player, {
-		phase = m.phase,
-		you = m.score.you,
-		cpu = m.score.cpu,
-		opponent = { id = m.cpuTeam.id, city = m.cpuTeam.city, name = m.cpuTeam.name, primary = m.cpuTeam.primary, secondary = m.cpuTeam.secondary },
-		drive = m.drive,
-		drives = MatchConfig.DrivesPerTeam,
-		down = m.down,
-		toGo = m.firstDown >= L and "GOAL" or tostring(math.max(1, math.ceil((m.firstDown - m.los) / Y - 0.01))),
-		spot = MatchConfig.SpotText(m.los / Y),
-		ratings = { you = m.userRatings, cpu = m.cpuRatings },
-		play = m.call and m.call.id,
-		playState = m.play and m.play.state,
-		targets = targets,
-		message = message,
-		messageColor = color and color:ToHex(),
-		final = m.final,
-	})
-end
-
--- Avatar helpers ---------------------------------------------------------------------------
+-- Avatar ----------------------------------------------------------------------------------
 
 local function avatarParts(m)
 	local char = m.player.Character
@@ -144,7 +131,93 @@ local function avatarParts(m)
 	return char, hum, root
 end
 
-local function placeAvatar(m, cf, anchored)
+-- The avatar as a defender "unit" so blocking, tackling and coverage treat it like an NPC.
+local function makeAvatarUnit(m, npc)
+	local u = {
+		isAvatar = true,
+		slot = npc.slot,
+		card = npc.card,
+		attrs = npc.attrs,
+		info = npc.info,
+		speed = npc.speed,
+		stunUntil = 0,
+		engagedUntil = 0,
+		engageFactor = 0,
+		tackleReadyAt = 0,
+	}
+	function u:Position()
+		local _, _, root = avatarParts(m)
+		return root and root.Position or Vector3.zero
+	end
+	function u:Velocity()
+		local _, _, root = avatarParts(m)
+		return root and flat(root.AssemblyLinearVelocity) or Vector3.zero
+	end
+	return u
+end
+
+local function nameOf(unit)
+	if unit and unit.isAvatar then
+		return "YOU"
+	end
+	return unit and string.upper(unit.info and unit.info.last or "") or ""
+end
+
+-- State to client -----------------------------------------------------------------------
+
+local function sendState(m, message, color)
+	local userBall = m.possession == "user"
+	local targets = {}
+	if userBall then
+		for i, slotId in MatchConfig.Targets do
+			local route = m.call and m.call.routes[slotId]
+			local unit = m.units.Offense[slotId]
+			table.insert(targets, { key = i, slot = slotId, pos = unit.card.pos, name = nameOf(unit), available = type(route) == "table" })
+		end
+	end
+	local controlled = not userBall and m.units.Defense[m.controlSlot]
+	-- field position from YOUR point of view
+	local yourYards = userBall and m.los / Y or MatchConfig.FieldYards - m.los / Y
+	remotes.MatchState:FireClient(m.player, {
+		phase = m.phase,
+		possession = m.possession,
+		you = m.score.you,
+		cpu = m.score.cpu,
+		opponent = { id = m.cpu.team.id, city = m.cpu.team.city, name = m.cpu.team.name, primary = m.cpu.team.primary, secondary = m.cpu.team.secondary },
+		drive = m.drive,
+		drives = MatchConfig.DrivesPerTeam,
+		down = m.down,
+		toGo = m.firstDown >= L and "GOAL" or tostring(math.max(1, math.ceil((m.firstDown - m.los) / Y - 0.01))),
+		spot = MatchConfig.SpotText(yourYards),
+		ratings = { you = m.user.ratings, cpu = m.cpu.ratings },
+		play = m.call and m.call.id,
+		defCall = m.defCall,
+		playState = m.play and m.play.state,
+		targets = targets,
+		control = controlled and { slot = m.controlSlot, pos = controlled.card.pos, name = nameOf(controlled) } or nil,
+		message = message,
+		messageColor = color and color:ToHex(),
+		final = m.final,
+	})
+end
+
+-- Possession + formation --------------------------------------------------------------------
+
+local function setPossession(m, who)
+	m.possession = who
+	m.field.flipped = who == "cpu"
+	local off = who == "user" and m.user or m.cpu
+	local def = who == "user" and m.cpu or m.user
+	m.units = { Offense = off.off, Defense = def.def }
+	for _, unit in off.def do
+		unit:Hide(true)
+	end
+	for _, unit in def.off do
+		unit:Hide(true)
+	end
+end
+
+local function placeAvatar(m, cf, speed)
 	local char, hum, root = avatarParts(m)
 	if not root then
 		return
@@ -152,31 +225,39 @@ local function placeAvatar(m, cf, anchored)
 	root.Anchored = false
 	char:PivotTo(cf + Vector3.new(0, 3, 0))
 	root.AssemblyLinearVelocity = Vector3.zero
-	root.Anchored = anchored
-	hum.WalkSpeed = m.avatarSpeed or 16
+	root.Anchored = true
+	hum.WalkSpeed = speed
 end
 
--- Formation ---------------------------------------------------------------------------------
-
 local function lineUp(m)
+	local userBall = m.possession == "user"
 	for slotId, unit in m.units.Offense do
 		local spot = MatchConfig.Formation.Offense[slotId]
 		local cf = m.field:CFrameAt(spot[1] * Y, m.los + spot[2] * Y, 0, true)
 		unit.home = cf.Position
-		if slotId == "QB" then
+		if userBall and slotId == "QB" then
 			unit:Hide(true)
-			m.avatarSpeed = unit.speed
-			placeAvatar(m, cf, true)
+			placeAvatar(m, cf, unit.speed)
 		else
 			unit:Hide(false)
 			unit:Place(cf)
-			unit:SetTag(("%s %s"):format(unit.card.pos, string.upper(m.userInfos[slotId].last or "")))
+			unit:SetTag(("%s %s"):format(unit.card.pos, nameOf(unit)))
 		end
 	end
+	m.avatarUnit = nil
 	for slotId, unit in m.units.Defense do
 		local spot = MatchConfig.Formation.Defense[slotId]
-		unit:Hide(false)
-		unit:Place(m.field:CFrameAt(spot[1] * Y, m.los + spot[2] * Y, 0, false))
+		local cf = m.field:CFrameAt(spot[1] * Y, m.los + spot[2] * Y, 0, false)
+		unit.home = cf.Position
+		if not userBall and slotId == m.controlSlot then
+			unit:Hide(true)
+			placeAvatar(m, cf, unit.speed)
+			m.avatarUnit = makeAvatarUnit(m, unit)
+		else
+			unit:Hide(false)
+			unit:Place(cf)
+			unit:SetTag(("%s %s"):format(unit.card.pos, nameOf(unit)))
+		end
 	end
 	m.field:SetMarkers(m.los, m.firstDown)
 	m.ball.Parent = m.field.model
@@ -187,23 +268,56 @@ local function tagTargets(m)
 		local unit = m.units.Offense[slotId]
 		local route = m.call and m.call.routes[slotId]
 		if type(route) == "table" and not m.call.run then
-			unit:SetTag(("[%d] %s %s"):format(i, unit.card.pos, string.upper(m.userInfos[slotId].last or "")), Color3.fromRGB(255, 214, 40))
+			unit:SetTag(("[%d] %s %s"):format(i, unit.card.pos, nameOf(unit)), GOLD)
 		end
 	end
 end
 
--- Play engine --------------------------------------------------------------------------------
+-- All defenders that can tackle / cover right now (NPCs + you when you're on defense)
+local function defenders(m)
+	local list = {}
+	for _, d in m.units.Defense do
+		if not d.hidden then
+			table.insert(list, d)
+		end
+	end
+	if m.avatarUnit then
+		table.insert(list, m.avatarUnit)
+	end
+	return list
+end
 
-local endPlay -- forward
+local function defenderAt(m, slotId)
+	if m.avatarUnit and m.avatarUnit.slot == slotId then
+		return m.avatarUnit
+	end
+	return m.units.Defense[slotId]
+end
+
+-- Ball carrier -----------------------------------------------------------------------------
 
 local function carrierPos(m)
-	local _, _, root = avatarParts(m)
-	return root and root.Position
+	if m.play and m.play.state == "air" then
+		return m.play.air.to -- while the ball is in the air, everyone keys on the landing spot
+	end
+	local c = m.play and m.play.carrier
+	if c == "avatar" then
+		local _, _, root = avatarParts(m)
+		return root and root.Position
+	end
+	return c and c:Position()
 end
 
 local function carrierVel(m)
-	local _, _, root = avatarParts(m)
-	return root and flat(root.AssemblyLinearVelocity) or Vector3.zero
+	if m.play and m.play.state == "air" then
+		return Vector3.zero
+	end
+	local c = m.play and m.play.carrier
+	if c == "avatar" then
+		local _, _, root = avatarParts(m)
+		return root and flat(root.AssemblyLinearVelocity) or Vector3.zero
+	end
+	return c and c:Velocity() or Vector3.zero
 end
 
 local function compileRoutes(m)
@@ -224,7 +338,7 @@ local function compileRoutes(m)
 	return routes
 end
 
--- Put the user's avatar in place of an offensive NPC (catch or handoff).
+-- Your ball: put your avatar in place of an offensive NPC (catch or handoff).
 local function swapInto(m, slotId)
 	local unit = m.units.Offense[slotId]
 	local char, hum, root = avatarParts(m)
@@ -239,40 +353,142 @@ local function swapInto(m, slotId)
 	unit:Hide(true)
 	qb:Hide(false)
 	qb:Place(CFrame.new(oldCF.Position - Vector3.new(0, 3, 0)) * oldCF.Rotation)
-	m.play.carrierSlot = slotId
+	m.play.carrier = "avatar"
 	m.play.carrierCard = unit.card
+	m.play.carrierName = nameOf(unit)
 	hum.WalkSpeed = unit.speed
 	m.play.state = "carry"
 end
+
+-- CPU ball: an NPC becomes the ball carrier.
+local function giveTo(m, unit)
+	m.play.carrier = unit
+	m.play.carrierCard = unit.card
+	m.play.carrierName = nameOf(unit)
+	m.play.state = "carry"
+end
+
+-- You on defense: jump into another defender (nearest the ball). The one you leave becomes AI.
+local function switchControl(m, slotId)
+	local target = m.units.Defense[slotId]
+	local current = m.units.Defense[m.controlSlot]
+	local char, hum, root = avatarParts(m)
+	if not target or not current or target == current or not root then
+		return
+	end
+	local anchored = root.Anchored
+	local myCF = root.CFrame
+	root.Anchored = false
+	char:PivotTo(target.root.CFrame)
+	root.AssemblyLinearVelocity = Vector3.zero
+	root.Anchored = anchored
+	target:Hide(true)
+	current:Hide(false)
+	current:Place(CFrame.new(myCF.Position - Vector3.new(0, 3, 0)) * myCF.Rotation)
+	m.controlSlot = slotId
+	m.avatarUnit = makeAvatarUnit(m, target)
+	hum.WalkSpeed = target.speed
+end
+
+-- Play engine --------------------------------------------------------------------------------
+
+local endPlay, throwBall -- forward
 
 local function attemptTackle(m, def, now)
 	local carrier = m.play.carrierCard.attrs
 	local elusive = math.max(carrier.CAR or 40, carrier.AGI or 40)
 	local p = math.clamp(0.6 + ((def.attrs.TAK or 50) - elusive) * 0.012, 0.25, 0.93)
-	def.tackleReadyAt = now + 1.4
+	def.tackleReadyAt = now + (def.isAvatar and 0.8 or 1.4)
 	if rng:NextNumber() < p then
 		local _, fy = m.field:ToField(carrierPos(m))
 		endPlay(m, m.play.state == "dropback" and "sack" or "tackle", fy, def)
 	else
-		def.stunUntil = now + 1.1
-		sendState(m, "BROKEN TACKLE!", Color3.fromRGB(46, 255, 140))
+		def.stunUntil = now + (def.isAvatar and 0.5 or 0.7)
+		if def.isAvatar then
+			sendState(m, "MISSED TACKLE!", RED)
+		elseif m.possession == "user" then
+			sendState(m, "BROKEN TACKLE!", GREEN)
+		end
+	end
+end
+
+-- NPC ball carrier: head for the end zone, steering away from nearby tacklers.
+local function runnerMove(m, unit, now)
+	local pos = unit:Position()
+	local dir = m.field:Downfield()
+	local push = Vector3.zero
+	for _, d in defenders(m) do
+		local offset = flat(pos - d:Position())
+		local dist = offset.Magnitude
+		-- only react to tacklers close in front of / beside the runner
+		if dist < 9 and dist > 0.1 and offset:Dot(dir) < 2 then
+			push += offset.Unit * (9 - dist) / 9
+		end
+	end
+	-- shiftier runners (AGI) cut harder; everyone mostly runs north-south
+	local juke = math.clamp(((unit.attrs.AGI or 50) - 40) / 60, 0.15, 1) * 0.7
+	local steer = dir + Vector3.new(push.X, 0, push.Z) * juke
+	local target = pos + steer.Unit * 10
+	-- stay in bounds
+	local tx, ty = m.field:ToField(target)
+	tx = math.clamp(tx, -HALF_W + 4, HALF_W - 4)
+	unit:MoveTo(m.field:ToWorld(tx, ty, 0), now)
+end
+
+-- CPU QB: wait for routes to develop, throw to whoever is most open, hurry under pressure.
+local function cpuQbDecide(m, now)
+	local play = m.play
+	local qb = m.units.Offense.QB
+	local t = now - play.t0
+	play.throwAt = play.throwAt or rng:NextNumber(1.3, 2.6)
+	local defs = defenders(m)
+	local pressure = false
+	for _, d in defs do
+		if hdist(d:Position(), qb:Position()) < 6 then
+			pressure = true
+		end
+	end
+	local best, bestScore, bestOpen
+	for slotId in play.routes do
+		local rcv = m.units.Offense[slotId]
+		local open = math.huge
+		for _, d in defs do
+			open = math.min(open, hdist(d:Position(), rcv:Position()))
+		end
+		local _, ry = m.field:ToField(rcv:Position())
+		local score = math.min(open, 12) + (ry - m.los) * 0.05
+		if not bestScore or score > bestScore then
+			best, bestScore, bestOpen = rcv, score, open
+		end
+	end
+	if best and ((t >= play.throwAt and bestOpen >= 3.5) or (pressure and t > 0.9) or t > 3.4) then
+		throwBall(m, best)
 	end
 end
 
 local function think(m, now)
 	local play = m.play
-	local qbPos = carrierPos(m)
-	if not qbPos then
+	local ballPos = carrierPos(m)
+	if not ballPos then
 		return
 	end
 	local cVel = carrierVel(m)
 	local off, def = m.units.Offense, m.units.Defense
+	local userBall = m.possession == "user"
+	local defList = defenders(m)
 
-	-- offense (your NPCs) -------------------------------------------------------------
+	-- offense ---------------------------------------------------------------------------
 	for slotId, unit in off do
 		if not unit.hidden then
 			local route = play.routes[slotId]
-			if play.state ~= "carry" and route then
+			if play.carrier == unit then
+				if play.state == "carry" then
+					runnerMove(m, unit, now)
+				else
+					-- CPU QB in the pocket: settle a yard deeper than his spot
+					unit:MoveTo(unit.home - m.field:Downfield() * Y, now)
+				end
+			elseif play.state ~= "carry" and route then
 				local target = route.points[route.index]
 				if hdist(unit:Position(), target) < 2.5 and route.index < #route.points then
 					route.index += 1
@@ -280,25 +496,23 @@ local function think(m, now)
 				end
 				unit:MoveTo(target, now)
 			else
-				-- block: pass pro on the assigned rusher, otherwise the nearest threat to the ball
-				local victim = MatchConfig.BlockAssignments[slotId] and def[MatchConfig.BlockAssignments[slotId]]
+				-- block: the assigned rusher in pass pro, otherwise the nearest threat to the ball
+				local assigned = MatchConfig.BlockAssignments[slotId]
+				local victim = assigned and defenderAt(m, assigned)
 				if play.state == "carry" or not victim then
 					local best, bestD = nil, 30
-					for _, d in def do
+					for _, d in defList do
 						local dd = hdist(d:Position(), unit:Position())
-						if dd < bestD and hdist(d:Position(), qbPos) < 35 then
+						if dd < bestD and hdist(d:Position(), ballPos) < 35 then
 							best, bestD = d, dd
 						end
 					end
 					victim = best
 				end
 				if victim then
-					local between = victim:Position() + flat(qbPos - victim:Position()).Unit * 1.5
+					local between = victim:Position() + flat(ballPos - victim:Position()).Unit * 1.5
 					unit:MoveTo(between, now)
 					if hdist(unit:Position(), victim:Position()) < 4.5 then
-						-- engaged: the defender keeps only a fraction of his speed.
-						-- Pass rush: PRS vs BLK (even matchup = ~18% speed, ~5s before a sack).
-						-- Run/after catch: TAK vs BLK.
 						local blk = unit.attrs.BLK or 40
 						local keep
 						if play.state == "carry" then
@@ -306,56 +520,82 @@ local function think(m, now)
 						else
 							keep = math.clamp(0.18 + ((victim.attrs.PRS or 50) - blk) * 0.008, 0.05, 0.45)
 						end
+						if victim.isAvatar then
+							keep = math.max(keep, 0.45) -- you can always fight through a block a bit
+						end
 						victim.engagedUntil = now + 0.3
 						victim.engageFactor = 1 - keep
 					end
 				else
-					unit:MoveTo(qbPos + Vector3.new(0, 0, -12), now)
+					unit:MoveTo(ballPos + m.field:Downfield() * 12, now)
 				end
 			end
 		end
 	end
 
-	-- defense (CPU) ----------------------------------------------------------------------
+	-- defense (AI defenders; the one you control is hidden and skipped) ------------------------
 	local deepestY, deepestX = m.los, 0
-	for slotId, route in play.routes do
+	for slotId in play.routes do
 		local x, y = m.field:ToField(off[slotId]:Position())
 		if y > deepestY then
 			deepestY, deepestX = y, x
 		end
 	end
+	local call = m.defCall or "man"
+	-- you're a free player: the AI safety picks up the man of whoever you control
+	local coverage = MatchConfig.Coverage
+	if m.avatarUnit and coverage[m.avatarUnit.slot] then
+		coverage = table.clone(coverage)
+		coverage.S = coverage[m.avatarUnit.slot]
+	end
 
 	for slotId, unit in def do
-		local target
-		local pursue = play.state == "carry"
-		local reading = pursue and play.handoffAt and now - play.handoffAt < 0.6 and slotId ~= "DL1" and slotId ~= "DL2"
-		if reading then
-			target = nil -- linebackers/DBs read the run for a moment before they chase
-		elseif play.state == "air" and hdist(unit:Position(), play.air.to) < 40 then
-			target = play.air.to
-		elseif pursue then
-			local lead = math.clamp(hdist(unit:Position(), qbPos) / unit.speed, 0, 0.8)
-			target = qbPos + cVel * lead
-		elseif slotId == "DL1" or slotId == "DL2" then
-			target = qbPos
-		elseif slotId == "S" then
-			target = m.field:ToWorld(deepestX * 0.5, math.max(m.los + 12 * Y, deepestY + 5 * Y), 0)
-		else
-			local mark = off[MatchConfig.Coverage[slotId]]
-			if mark and not mark.hidden and play.routes[mark.slot] then
-				local cov = unit.attrs.COV or 50
-				if now >= (unit.reactAt or 0) then
-					unit.coverPoint = mark:Position() + mark:Velocity() * 0.35 + Vector3.new(0, 0, -1.5)
-					unit.reactAt = now + math.clamp(0.5 - (cov - 50) * 0.007, 0.12, 0.5)
-				end
-				target = unit.coverPoint
+		if not unit.hidden then
+			local target
+			local pursue = play.state == "carry"
+			local reading = pursue and play.handoffAt and now - play.handoffAt < 0.6 and slotId ~= "DL1" and slotId ~= "DL2"
+			local isLB = slotId == "LB1" or slotId == "LB2"
+			if reading then
+				target = nil
+			elseif play.state == "air" and hdist(unit:Position(), play.air.to) < 40 then
+				target = play.air.to
+			elseif pursue then
+				local lead = math.clamp(hdist(unit:Position(), ballPos) / unit.speed, 0, 0.8)
+				target = ballPos + cVel * lead
+			elseif slotId == "DL1" or slotId == "DL2" or (call == "blitz" and isLB) then
+				target = ballPos
+			elseif slotId == "S" and not coverage.S then
+				target = m.field:ToWorld(deepestX * 0.5, math.max(m.los + 12 * Y, deepestY + 5 * Y), 0)
 			else
-				-- man is blocking: spy the QB a few yards past the line
-				local qx = m.field:ToField(qbPos)
-				target = m.field:ToWorld(qx, m.los + 4 * Y, 0)
+				local mark = off[coverage[slotId]]
+				if mark and not mark.hidden and play.routes[mark.slot] then
+					local mx, my = m.field:ToField(mark:Position())
+					if call == "zone" then
+						if isLB then
+							target = m.field:ToWorld(mx * 0.6, m.los + 5 * Y, 0)
+						else
+							target = m.field:ToWorld(mx, math.max(my + 2.5 * Y, m.los + 7 * Y), 0)
+						end
+					else
+						local cov = unit.attrs.COV or 50
+						if now >= (unit.reactAt or 0) then
+							unit.coverPoint = mark:Position() + mark:Velocity() * 0.35 + m.field:Downfield() * 1.5
+							unit.reactAt = now + math.clamp(0.5 - (cov - 50) * 0.007, 0.12, 0.5)
+						end
+						target = unit.coverPoint
+					end
+				else
+					-- his man stayed in to block: spy the QB a few yards past the line
+					local qx = m.field:ToField(ballPos)
+					target = m.field:ToWorld(qx, m.los + 4 * Y, 0)
+				end
 			end
+			unit:MoveTo(target or unit:Position(), now)
 		end
-		unit:MoveTo(target or unit:Position(), now)
+	end
+
+	if not userBall and play.state == "dropback" and not m.call.run then
+		cpuQbDecide(m, now)
 	end
 end
 
@@ -368,8 +608,13 @@ local function updateBall(m, now)
 		m.ball.CFrame = CFrame.new(p)
 		return s >= 1
 	end
-	local char = m.player.Character
-	local hand = char and (char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm") or char:FindFirstChild("HumanoidRootPart"))
+	local holder
+	if play.carrier == "avatar" then
+		holder = m.player.Character
+	elseif play.carrier then
+		holder = play.carrier.model
+	end
+	local hand = holder and (holder:FindFirstChild("RightHand") or holder:FindFirstChild("Right Arm") or holder:FindFirstChild("HumanoidRootPart"))
 	if hand then
 		m.ball.CFrame = hand.CFrame * CFrame.new(0, -0.6, -0.3)
 	end
@@ -381,13 +626,20 @@ local function resolveCatch(m)
 	local rcv = a.target
 	local rcvDist = hdist(rcv:Position(), a.to)
 	local nearest, sep = nil, math.huge
-	for _, d in m.units.Defense do
+	for _, d in defenders(m) do
 		local dd = hdist(d:Position(), a.to)
 		if dd < sep then
 			nearest, sep = d, dd
 		end
 	end
-	if nearest and sep < 3.2 then
+	if nearest and nearest.isAvatar and sep < 3 then
+		-- you got under the throw: your best chance at a pick
+		local pInt = math.clamp(0.3 + ((nearest.attrs.COV or 50) - 60) * 0.006 + (3 - sep) * 0.08 + (rcvDist > 4 and 0.2 or 0), 0.15, 0.75)
+		if rng:NextNumber() < pInt then
+			endPlay(m, "int", nil, nearest)
+			return
+		end
+	elseif nearest and sep < 3.2 then
 		-- ~2-3% normally, ~10% into tight coverage by a good cover man, more on bad throws
 		local pInt = math.clamp(0.02 + ((nearest.attrs.COV or 50) - 60) * 0.002 + math.max(0, 2.5 - sep) * 0.04 + (rcvDist > 4 and 0.1 or 0), 0.01, 0.25)
 		if rng:NextNumber() < pInt then
@@ -397,18 +649,22 @@ local function resolveCatch(m)
 	end
 	if rcvDist <= 4.5 then
 		local cth = rcv.attrs.CTH or 50
-		local pCatch = math.clamp(0.55 + cth * 0.004 - math.max(0, 3 - sep) * 0.08 - math.max(0, rcvDist - 1.5) * 0.05, 0.05, 0.97)
-		log(("catch check: CTH %d, ball %.1f studs off, nearest defender %.1f, chance %.0f%%"):format(cth, rcvDist, sep, pCatch * 100))
+		local breakup = (nearest and nearest.isAvatar and sep < 3) and 0.15 or 0
+		local pCatch = math.clamp(0.55 + cth * 0.004 - math.max(0, 3 - sep) * 0.08 - math.max(0, rcvDist - 1.5) * 0.05 - breakup, 0.05, 0.97)
+		log(("catch check: CTH %d, ball %.1f off, nearest defender %.1f%s, chance %.0f%%"):format(cth, rcvDist, sep, nearest and nearest.isAvatar and " (you)" or "", pCatch * 100))
 		if rng:NextNumber() < pCatch then
-			swapInto(m, rcv.slot)
-			m.ball.CFrame = CFrame.new(rcv:Position())
-			sendState(m, "CAUGHT! RUN!", Color3.fromRGB(46, 255, 140))
+			if m.possession == "user" then
+				swapInto(m, rcv.slot)
+				sendState(m, "CAUGHT! RUN!", GREEN)
+			else
+				giveTo(m, rcv)
+				sendState(m, "CAUGHT BY " .. nameOf(rcv) .. " - TACKLE HIM!", RED)
+			end
 			return
 		end
-		endPlay(m, "drop", nil, nil, rcv)
+		endPlay(m, "drop", nil, nearest, rcv)
 		return
 	end
-	log(("off target: ball %.1f studs from receiver"):format(rcvDist))
 	endPlay(m, "incomplete")
 end
 
@@ -424,6 +680,21 @@ local function step(m)
 		return
 	end
 
+	-- your defender: slowed while a blocker is on you, frozen briefly after a missed tackle
+	if m.avatarUnit then
+		local _, hum = avatarParts(m)
+		if hum then
+			local u = m.avatarUnit
+			local speed = u.speed
+			if now < u.stunUntil then
+				speed *= 0.3
+			elseif now < u.engagedUntil then
+				speed *= (1 - u.engageFactor)
+			end
+			hum.WalkSpeed = speed
+		end
+	end
+
 	local pos = carrierPos(m)
 	if not pos then
 		endPlay(m, "timeout", m.los)
@@ -431,31 +702,28 @@ local function step(m)
 	end
 	local fx, fy = m.field:ToField(pos)
 
-	if play.state == "dropback" or play.state == "carry" or play.state == "air" then
-		if math.abs(fx) > HALF_W and play.state ~= "air" then
-			endPlay(m, "out", fy)
-			return
-		end
-		if play.state == "carry" and fy >= L then
-			endPlay(m, "td", fy)
-			return
-		end
-		if play.state == "dropback" and fy > m.los + Y then
-			play.state = "carry" -- QB scramble: no throwing past the line
-			play.carrierCard = m.units.Offense.QB.card
-			sendState(m, "SCRAMBLE!", Color3.fromRGB(255, 214, 40))
-		end
-		if now - play.t0 > MatchConfig.MaxPlaySeconds then
-			endPlay(m, "timeout", play.state == "air" and m.los or fy)
-			return
-		end
+	if play.state ~= "air" and math.abs(fx) > HALF_W then
+		endPlay(m, "out", fy)
+		return
+	end
+	if play.state == "carry" and fy >= L then
+		endPlay(m, "td", fy)
+		return
+	end
+	if m.possession == "user" and play.state == "dropback" and fy > m.los + Y then
+		play.state = "carry" -- QB scramble: no throwing past the line
+		play.carrierCard = m.units.Offense.QB.card
+		sendState(m, "SCRAMBLE!", GOLD)
+	end
+	if now - play.t0 > MatchConfig.MaxPlaySeconds then
+		endPlay(m, "timeout", play.state == "air" and m.los or fy)
+		return
 	end
 
 	-- tackles (and sacks) on the ball carrier
 	if play.state == "dropback" or play.state == "carry" then
-		for _, d in m.units.Defense do
-			-- a defender who is locked up with a blocker can't make the tackle
-			local blocked = now < d.engagedUntil
+		for _, d in defenders(m) do
+			local blocked = now < d.engagedUntil and not d.isAvatar
 			if not blocked and now >= d.stunUntil and now >= (d.tackleReadyAt or 0) and hdist(d:Position(), pos) < TACKLE_RANGE then
 				attemptTackle(m, d, now)
 				if play.state == "dead" then
@@ -472,7 +740,7 @@ local function step(m)
 	end
 end
 
-local startDrive, nextPlay, cpuDrive, finishGame -- forward
+local startDrive, nextPlay, nextPossession, finishGame -- forward
 
 function endPlay(m, result, spotY, defender, receiver)
 	local play = m.play
@@ -483,37 +751,63 @@ function endPlay(m, result, spotY, defender, receiver)
 	if play.conn then
 		play.conn:Disconnect()
 	end
-	for _, unit in m.units.Offense do
-		unit.humanoid:Move(Vector3.zero)
-	end
-	for _, unit in m.units.Defense do
-		unit.humanoid:Move(Vector3.zero)
+	for _, side in m.units do
+		for _, unit in side do
+			unit.humanoid:Move(Vector3.zero)
+		end
 	end
 	local _, hum = avatarParts(m)
 	if hum then
 		hum.WalkSpeed = 0
 	end
 
+	local userBall = m.possession == "user"
 	local yards = spotY and (spotY - m.los) / Y or 0
 	local msg, color, driveOver = nil, Color3.new(1, 1, 1), false
-	local defName = defender and string.upper(m.cpuInfos[defender.slot].last or "") or ""
+	local good, bad = GREEN, RED
+	if not userBall then
+		good, bad = RED, GREEN -- from your point of view, CPU gains are bad
+	end
 
 	if result == "td" then
-		m.score.you += MatchConfig.TouchdownPoints
-		msg, color, driveOver = "TOUCHDOWN!", Color3.fromRGB(46, 255, 140), true
+		if userBall then
+			m.score.you += MatchConfig.TouchdownPoints
+			msg = "TOUCHDOWN!"
+		else
+			m.score.cpu += MatchConfig.TouchdownPoints
+			msg = string.upper(m.cpu.team.name) .. " TOUCHDOWN"
+		end
+		color, driveOver = good, true
 	elseif result == "int" then
-		msg, color, driveOver = "INTERCEPTED by " .. defName, Color3.fromRGB(255, 90, 90), true
+		msg = (userBall and "INTERCEPTED by " or "INTERCEPTION by ") .. nameOf(defender) .. (userBall and "" or "!")
+		color, driveOver = bad, true
 	elseif result == "incomplete" or result == "drop" then
-		msg = result == "drop" and ("DROPPED by " .. string.upper(m.userInfos[receiver.slot].last or "")) or "INCOMPLETE"
-		color = Color3.fromRGB(255, 196, 46)
+		if result == "drop" then
+			msg = "DROPPED by " .. nameOf(receiver)
+			if defender and defender.isAvatar then
+				msg = "PASS BROKEN UP by YOU!"
+			end
+		else
+			msg = "INCOMPLETE"
+		end
+		color = userBall and Color3.fromRGB(255, 196, 46) or GREEN
 		spotY = m.los
 	elseif spotY and spotY < 0 then
-		m.score.cpu += MatchConfig.SafetyPoints
-		msg, color, driveOver = "SAFETY", Color3.fromRGB(255, 90, 90), true
+		if userBall then
+			m.score.cpu += MatchConfig.SafetyPoints
+		else
+			m.score.you += MatchConfig.SafetyPoints
+		end
+		msg, color, driveOver = "SAFETY", bad, true
 	else
-		local verb = result == "sack" and ("SACKED by " .. defName) or result == "out" and "Out of bounds" or result == "timeout" and "Whistle" or ("Tackled by " .. defName)
+		local by = nameOf(defender)
+		local verb = result == "sack" and ("SACKED by " .. by) or result == "out" and "Out of bounds" or result == "timeout" and "Whistle" or ("Tackled by " .. by)
 		msg = ("%s  (%+d yds)"):format(verb, math.floor(yards + (yards >= 0 and 0.5 or -0.5)))
-		color = yards >= 0 and Color3.new(1, 1, 1) or Color3.fromRGB(255, 120, 90)
+		if userBall then
+			color = yards >= 0 and Color3.new(1, 1, 1) or Color3.fromRGB(255, 120, 90)
+		else
+			color = yards <= 2 and GREEN or Color3.new(1, 1, 1)
+		end
 	end
 
 	if not driveOver then
@@ -525,14 +819,17 @@ function endPlay(m, result, spotY, defender, receiver)
 		else
 			m.down += 1
 			if m.down > 4 then
-				msg ..= "  -  TURNOVER ON DOWNS"
+				msg ..= userBall and "  -  TURNOVER ON DOWNS" or "  -  STOPPED ON DOWNS!"
+				if not userBall then
+					color = GREEN
+				end
 				driveOver = true
 			end
 		end
 	end
 
 	m.phase = "result"
-	log(("play %s: %s after %.1fs -> %s"):format(m.call and m.call.id or "?", result, os.clock() - (play.t0 or os.clock()), msg))
+	log(("%s ball, %s/%s: %s after %.1fs -> %s"):format(m.possession, m.call and m.call.id or "?", m.defCall or "?", result, os.clock() - (play.t0 or os.clock()), msg))
 	sendState(m, msg, color)
 	local token = m.token
 	task.delay(2.6, function()
@@ -540,7 +837,7 @@ function endPlay(m, result, spotY, defender, receiver)
 			return
 		end
 		if driveOver then
-			cpuDrive(m)
+			nextPossession(m)
 		else
 			nextPlay(m)
 		end
@@ -549,24 +846,31 @@ end
 
 local function snap(m)
 	local play = m.play
+	local userBall = m.possession == "user"
 	play.state = "dropback"
 	play.t0 = os.clock()
 	play.nextThink = 0
 	play.routes = compileRoutes(m)
+	play.carrier = userBall and "avatar" or m.units.Offense.QB
 	play.carrierCard = m.units.Offense.QB.card
 	m.phase = "live"
 	local _, hum, root = avatarParts(m)
 	if root then
 		root.Anchored = false
-		hum.WalkSpeed = m.units.Offense.QB.speed
+		hum.WalkSpeed = userBall and m.units.Offense.QB.speed or (m.avatarUnit and m.avatarUnit.speed or 16)
 	end
 	if m.call.run then
 		local token = m.token
 		task.delay(0.45, function()
 			if m.token == token and m.play == play and play.state == "dropback" then
 				play.handoffAt = os.clock()
-				swapInto(m, "RB")
-				sendState(m, "HANDOFF - RUN!", Color3.fromRGB(46, 255, 140))
+				if userBall then
+					swapInto(m, "RB")
+					sendState(m, "HANDOFF - RUN!", GREEN)
+				else
+					giveTo(m, m.units.Offense.RB)
+					sendState(m, "IT'S A RUN!", GOLD)
+				end
 			end
 		end)
 	end
@@ -576,21 +880,17 @@ local function snap(m)
 	sendState(m)
 end
 
-local function throw(m, key)
+-- Throw from the current QB to a receiver NPC (used by you and by the CPU QB).
+function throwBall(m, rcv)
 	local play = m.play
-	local slotId = MatchConfig.Targets[key]
-	if not play or play.state ~= "dropback" or m.call.run or not slotId or not play.routes[slotId] then
-		return
-	end
-	local rcv = m.units.Offense[slotId]
+	local route = play.routes[rcv.slot]
 	local from = carrierPos(m)
-	if not from or rcv.hidden then
+	if not from or not route or rcv.hidden then
 		return
 	end
 	local qb = m.units.Offense.QB.attrs
 	local ballSpeed = 45 + (qb.THP or 50) * 0.35
 	-- lead the receiver along his actual route (so throws hit him after his cut)
-	local route = play.routes[slotId]
 	local function along(t)
 		local pos = flat(rcv:Position())
 		local budget = rcv.speed * t
@@ -603,7 +903,7 @@ local function throw(m, key)
 			budget -= seg
 			pos = wp
 		end
-		return pos + Vector3.new(0, rcv:Position().Y, 0) -- route finished: he sits there
+		return pos + Vector3.new(0, rcv:Position().Y, 0)
 	end
 	local predicted = rcv:Position()
 	local T = 0.1
@@ -623,57 +923,68 @@ local function throw(m, key)
 		h = math.clamp(dist * 0.18, 3, 22),
 		target = rcv,
 	}
+	play.carrier = nil
 	play.state = "air"
 	sendState(m)
+end
+
+local function userThrow(m, key)
+	local play = m.play
+	local slotId = MatchConfig.Targets[key]
+	if m.possession ~= "user" or not play or play.state ~= "dropback" or m.call.run or not slotId or not play.routes[slotId] then
+		return
+	end
+	throwBall(m, m.units.Offense[slotId])
+end
+
+local function cpuPlayCall(m)
+	local toGo = (m.firstDown - m.los) / Y
+	local options
+	if m.down >= 3 and toGo > 6 then
+		options = { { "quick", 45 }, { "deep", 45 }, { "run", 10 } }
+	elseif toGo <= 3 then
+		options = { { "quick", 30 }, { "deep", 15 }, { "run", 55 } }
+	else
+		options = { { "quick", 40 }, { "deep", 25 }, { "run", 35 } }
+	end
+	return MatchConfig.PlaysById[weighted(options)]
 end
 
 function nextPlay(m)
 	m.token += 1
 	m.play = nil
 	m.call = nil
-	m.phase = "playcall"
+	m.defCall = nil
+	m.phase = m.possession == "user" and "playcall" or "defcall"
 	lineUp(m)
 	sendState(m)
 end
 
-function startDrive(m)
+function startDrive(m, who)
+	setPossession(m, who)
 	m.los = MatchConfig.StartYard * Y
 	m.down = 1
 	m.firstDown = m.los + MatchConfig.FirstDownYards * Y
+	m.controlSlot = m.controlSlot or MatchConfig.DefaultControl
 	nextPlay(m)
-	sendState(m, ("DRIVE %d OF %d"):format(m.drive, MatchConfig.DrivesPerTeam), Color3.fromRGB(46, 255, 140))
+	if who == "user" then
+		sendState(m, ("YOUR BALL  -  DRIVE %d OF %d"):format(m.drive, MatchConfig.DrivesPerTeam), GREEN)
+	else
+		sendState(m, string.upper(m.cpu.team.name) .. " BALL  -  DEFENSE!", GOLD)
+	end
 end
 
-function cpuDrive(m)
-	m.token += 1
-	m.phase = "cpu"
-	local cpuName = string.upper(m.cpuTeam.name)
-	local p = math.clamp(0.4 + (m.cpuRatings.off - m.userRatings.def) * 0.025, 0.1, 0.8)
-	local roll = rng:NextNumber()
-	local msg, color
-	if roll < p then
-		m.score.cpu += MatchConfig.TouchdownPoints
-		msg, color = cpuName .. " DRIVE: TOUCHDOWN", Color3.fromRGB(255, 90, 90)
-	elseif roll < p + (1 - p) * 0.2 then
-		msg, color = "YOUR DEFENSE INTERCEPTS " .. cpuName .. "!", Color3.fromRGB(46, 255, 140)
-	elseif roll < p + (1 - p) * 0.6 then
-		msg, color = "YOUR DEFENSE FORCES A PUNT", Color3.fromRGB(46, 255, 140)
+function nextPossession(m)
+	if m.possession == "user" then
+		startDrive(m, "cpu")
 	else
-		msg, color = "STOPPED ON 4TH DOWN!", Color3.fromRGB(46, 255, 140)
-	end
-	sendState(m, msg, color)
-	local token = m.token
-	task.delay(3, function()
-		if m.token ~= token or not m.alive then
-			return
-		end
 		m.drive += 1
 		if m.drive > MatchConfig.DrivesPerTeam then
 			finishGame(m)
 		else
-			startDrive(m)
+			startDrive(m, "user")
 		end
-	end)
+	end
 end
 
 function finishGame(m)
@@ -697,7 +1008,7 @@ function finishGame(m)
 	end
 	m.final = { result = result, coins = coins }
 	log(m.player.Name, result, you, cpu)
-	sendState(m, result == "Win" and "YOU WIN!" or result == "Loss" and "YOU LOSE" or "TIE GAME", result == "Win" and Color3.fromRGB(46, 255, 140) or Color3.fromRGB(255, 196, 46))
+	sendState(m, result == "Win" and "YOU WIN!" or result == "Loss" and "YOU LOSE" or "TIE GAME", result == "Win" and GREEN or Color3.fromRGB(255, 196, 46))
 end
 
 -- Lifecycle -------------------------------------------------------------------------------
@@ -711,9 +1022,11 @@ local function cleanup(m)
 	if m.play and m.play.conn then
 		m.play.conn:Disconnect()
 	end
-	for _, side in m.units do
-		for _, unit in side do
-			unit:Destroy()
+	for _, team in { m.user, m.cpu } do
+		for _, side in { team.off, team.def } do
+			for _, unit in side do
+				unit:Destroy()
+			end
 		end
 	end
 	m.field:Destroy()
@@ -738,6 +1051,16 @@ local function cleanup(m)
 	end
 end
 
+local function buildTeam(m, cards, infos, primary, secondary)
+	local team = { cards = cards, infos = infos, off = {}, def = {}, ratings = ratingsFor(cards) }
+	for _, slot in LineupConfig.Slots do
+		local side = slot.side == "Offense" and team.off or team.def
+		side[slot.id] = Npc.new(slot.id, slot.side, cards[slot.id], infos[slot.id], primary, secondary, m.field.model)
+		side[slot.id]:Hide(true)
+	end
+	return team
+end
+
 function MatchService.Start(remoteFolder)
 	remotes = remoteFolder
 
@@ -746,14 +1069,15 @@ function MatchService.Start(remoteFolder)
 			return { ok = false, err = "You're already in a game." }
 		end
 		local profile = PlayerData.Get(player)
-		local char, _, root = player.Character, nil, player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		local char = player.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
 		if not profile or not CardDatabase.IsReady() or not root then
 			return { ok = false, err = "Still loading, try again in a moment." }
 		end
 
 		local userCards, userInfos = userSquad(profile)
-		local userRatings = ratingsFor(userCards)
-		local cpuTeam, cpuCards, cpuInfos = cpuSquad(userRatings.ovr)
+		local userOvr = ratingsFor(userCards).ovr
+		local cpuTeam, cpuCards, cpuInfos = cpuSquad(userOvr)
 		local cpuPrimary = Color3.fromHex(cpuTeam.primary)
 		local cpuSecondary = Color3.fromHex(cpuTeam.secondary)
 
@@ -763,23 +1087,12 @@ function MatchService.Start(remoteFolder)
 			token = 0,
 			score = { you = 0, cpu = 0 },
 			drive = 1,
-			userInfos = userInfos,
-			cpuInfos = cpuInfos,
-			cpuTeam = cpuTeam,
-			userRatings = userRatings,
-			cpuRatings = ratingsFor(cpuCards),
-			units = { Offense = {}, Defense = {} },
 		}
 		matches[player] = m
 		m.field = Field.new(USER_SECONDARY, cpuPrimary)
-
-		for _, slot in LineupConfig.Slots do
-			if slot.side == "Offense" then
-				m.units.Offense[slot.id] = Npc.new(slot.id, "Offense", userCards[slot.id], userInfos[slot.id], USER_PRIMARY, USER_SECONDARY, m.field.model)
-			else
-				m.units.Defense[slot.id] = Npc.new(slot.id, "Defense", cpuCards[slot.id], cpuInfos[slot.id], cpuPrimary, cpuSecondary, m.field.model)
-			end
-		end
+		m.user = buildTeam(m, userCards, userInfos, USER_PRIMARY, USER_SECONDARY)
+		m.cpu = buildTeam(m, cpuCards, cpuInfos, cpuPrimary, cpuSecondary)
+		m.cpu.team = cpuTeam
 
 		local ball = Instance.new("Part")
 		ball.Name = "Football"
@@ -797,8 +1110,8 @@ function MatchService.Start(remoteFolder)
 			cleanup(m) -- died/respawned mid-game: end it
 		end)
 
-		log(player.Name, "vs", cpuTeam.city, cpuTeam.name, "you", userRatings.ovr, "cpu", m.cpuRatings.ovr)
-		startDrive(m)
+		log(player.Name, "vs", cpuTeam.city, cpuTeam.name, "you", m.user.ratings.ovr, "cpu", m.cpu.ratings.ovr)
+		startDrive(m, "user")
 		return { ok = true }
 	end
 
@@ -809,14 +1122,49 @@ function MatchService.Start(remoteFolder)
 		end
 		if action == "call" and m.phase == "playcall" and MatchConfig.PlaysById[arg] then
 			m.call = MatchConfig.PlaysById[arg]
+			m.defCall = weighted({ { "man", 60 }, { "zone", 25 }, { "blitz", 15 } })
 			m.play = { state = "presnap" }
 			m.phase = "presnap"
 			tagTargets(m)
 			sendState(m)
+		elseif action == "defcall" and m.phase == "defcall" and MatchConfig.DefenseCallsById[arg] then
+			m.defCall = arg
+			m.call = cpuPlayCall(m)
+			m.play = { state = "presnap" }
+			m.phase = "presnap"
+			sendState(m)
 		elseif action == "snap" and m.phase == "presnap" then
 			snap(m)
 		elseif action == "throw" and m.phase == "live" and type(arg) == "number" then
-			throw(m, arg)
+			userThrow(m, arg)
+		elseif action == "switch" and m.possession == "cpu" and (m.phase == "presnap" or m.phase == "live" or m.phase == "defcall") then
+			local now = os.clock()
+			if now - (m.lastSwitch or 0) < 0.4 then
+				return
+			end
+			m.lastSwitch = now
+			if m.phase == "live" then
+				-- jump to the AI defender nearest the ball
+				local ballPos = m.play.state == "air" and m.play.air.to or carrierPos(m)
+				local best, bestD
+				for slotId, unit in m.units.Defense do
+					if not unit.hidden and ballPos then
+						local d = hdist(unit:Position(), ballPos)
+						if not bestD or d < bestD then
+							best, bestD = slotId, d
+						end
+					end
+				end
+				if best then
+					switchControl(m, best)
+				end
+			else
+				-- before the snap: cycle through the defenders
+				local cycle = MatchConfig.ControlCycle
+				local i = table.find(cycle, m.controlSlot) or 0
+				switchControl(m, cycle[i % #cycle + 1])
+			end
+			sendState(m)
 		elseif action == "leave" then
 			cleanup(m)
 		end
