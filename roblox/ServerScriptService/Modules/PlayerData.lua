@@ -118,8 +118,16 @@ local function load(userId)
 	return nil
 end
 
+local loading = {} -- [Player] = true while a load is in flight
+
 local function onPlayerAdded(player)
+	-- PlayerAdded and the existing-players loop in Start() can both reach the same player
+	if loading[player] or profiles[player] then
+		return
+	end
+	loading[player] = true
 	local data = load(player.UserId)
+	loading[player] = nil
 	if not player.Parent then
 		if data then
 			save(player.UserId, data, true) -- left while loading

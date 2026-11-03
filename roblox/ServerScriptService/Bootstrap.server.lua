@@ -69,9 +69,11 @@ local function giveStarterSquad(player)
 	print(("[Bootstrap] gave %s a starter squad of %d cards"):format(player.Name, #ids))
 end
 
+local givingStarter = {} -- [userId] = true; keyed by user so it survives any profile reload
+
 PlayerData.Changed.Event:Connect(function(player, profile)
-	if not profile.data.starterGiven and not profile.givingStarter then
-		profile.givingStarter = true
+	if not profile.data.starterGiven and not givingStarter[player.UserId] then
+		givingStarter[player.UserId] = true
 		task.spawn(giveStarterSquad, player)
 	end
 	InventoryChanged:FireClient(player, snapshotFor(player))
