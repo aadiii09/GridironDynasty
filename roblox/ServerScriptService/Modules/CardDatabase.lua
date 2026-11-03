@@ -204,6 +204,14 @@ function CardDatabase.GetCardsForPlayer(pid)
 	return byPlayer[pid] or {}
 end
 
+function CardDatabase.All()
+	return data and data.cards or {}
+end
+
+function CardDatabase.Teams()
+	return data and data.teams or {}
+end
+
 function CardDatabase.GetTeam(teamId)
 	if not data then
 		return nil

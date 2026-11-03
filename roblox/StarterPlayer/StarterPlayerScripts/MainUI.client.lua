@@ -870,6 +870,18 @@ button({ Text = "COLLECTION", Size = UDim2.fromOffset(150, 38), LayoutOrder = 4,
 	renderCollection()
 end).Parent = topBar
 
+local playButton = button({ Text = "PLAY VS AI", Size = UDim2.fromOffset(150, 38), LayoutOrder = 6, BackgroundColor3 = Color3.fromRGB(255, 90, 90), TextColor3 = WHITE })
+playButton.Activated:Connect(function()
+	showOnly(nil)
+	playButton.Text = "LOADING..."
+	local res = Remotes:WaitForChild("StartMatch"):InvokeServer()
+	playButton.Text = "PLAY VS AI"
+	if not res.ok then
+		toast(res.err or "Couldn't start a game")
+	end
+end)
+playButton.Parent = topBar
+
 button({ Text = "LINEUP", Size = UDim2.fromOffset(120, 38), LayoutOrder = 5, BackgroundColor3 = Color3.fromRGB(255, 196, 46) }, function()
 	if lineupPanel.Visible then
 		lineupPanel.Visible = false
