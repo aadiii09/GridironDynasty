@@ -1,0 +1,45 @@
+{
+  "league": { "name": "Gridiron Pro League", "abbr": "GPL" },
+  "conferences": ["Summit", "Harbor"],
+  "teams": [
+    { "id": "BOS", "city": "Boston",        "name": "Ironsides",    "conf": "Summit", "div": "East",  "primary": "#8C1D2F", "secondary": "#C9CED6" },
+    { "id": "BUF", "city": "Buffalo",       "name": "Blizzard",     "conf": "Summit", "div": "East",  "primary": "#2B6CB0", "secondary": "#E2E8F0" },
+    { "id": "MIA", "city": "Miami",         "name": "Barracudas",   "conf": "Summit", "div": "East",  "primary": "#FF5A5F", "secondary": "#1D3557" },
+    { "id": "JER", "city": "Jersey",        "name": "Riptide",      "conf": "Summit", "div": "East",  "primary": "#0E7C7B", "secondary": "#F28C28" },
+
+    { "id": "PIT", "city": "Pittsburgh",    "name": "Forge",        "conf": "Summit", "div": "North", "primary": "#2D2D2D", "secondary": "#FF8C00" },
+    { "id": "BAL", "city": "Baltimore",     "name": "Admirals",     "conf": "Summit", "div": "North", "primary": "#0B4F6C", "secondary": "#E9C46A" },
+    { "id": "CLE", "city": "Cleveland",     "name": "Rockers",      "conf": "Summit", "div": "North", "primary": "#3C096C", "secondary": "#FF9E00" },
+    { "id": "CIN", "city": "Cincinnati",    "name": "Steamers",     "conf": "Summit", "div": "North", "primary": "#264653", "secondary": "#2A9D8F" },
+
+    { "id": "HOU", "city": "Houston",       "name": "Orbiters",     "conf": "Summit", "div": "South", "primary": "#0D1B2A", "secondary": "#E63946" },
+    { "id": "IND", "city": "Indianapolis",  "name": "Speedsters",   "conf": "Summit", "div": "South", "primary": "#111111", "secondary": "#FFD60A" },
+    { "id": "JAX", "city": "Jacksonville",  "name": "Surge",        "conf": "Summit", "div": "South", "primary": "#03045E", "secondary": "#00B4D8" },
+    { "id": "NSH", "city": "Nashville",     "name": "Outlaws",      "conf": "Summit", "div": "South", "primary": "#6D2E46", "secondary": "#D4A373" },
+
+    { "id": "DEN", "city": "Denver",        "name": "Peaks",        "conf": "Summit", "div": "West",  "primary": "#4361EE", "secondary": "#A8DADC" },
+    { "id": "KCY", "city": "Kansas City",   "name": "Twisters",     "conf": "Summit", "div": "West",  "primary": "#6A4C93", "secondary": "#F4A261" },
+    { "id": "LVG", "city": "Las Vegas",     "name": "High Rollers", "conf": "Summit", "div": "West",  "primary": "#1A1A1A", "secondary": "#C1121F" },
+    { "id": "LAS", "city": "Los Angeles",   "name": "Starliners",   "conf": "Summit", "div": "West",  "primary": "#FF006E", "secondary": "#FFBE0B" },
+
+    { "id": "DAL", "city": "Dallas",        "name": "Rattlers",     "conf": "Harbor", "div": "East",  "primary": "#014F86", "secondary": "#E0E1DD" },
+    { "id": "NYE", "city": "New York",      "name": "Empire",       "conf": "Harbor", "div": "East",  "primary": "#1B2A6B", "secondary": "#F2B705" },
+    { "id": "PHI", "city": "Philadelphia",  "name": "Founders",     "conf": "Harbor", "div": "East",  "primary": "#1D4E89", "secondary": "#F7B32B" },
+    { "id": "WAS", "city": "Washington",    "name": "Sentinels",    "conf": "Harbor", "div": "East",  "primary": "#283618", "secondary": "#DDA15E" },
+
+    { "id": "CHI", "city": "Chicago",       "name": "Gale",         "conf": "Harbor", "div": "North", "primary": "#023047", "secondary": "#219EBC" },
+    { "id": "DET", "city": "Detroit",       "name": "Motors",       "conf": "Harbor", "div": "North", "primary": "#495057", "secondary": "#F94144" },
+    { "id": "GBY", "city": "Green Bay",     "name": "Lumberjacks",  "conf": "Harbor", "div": "North", "primary": "#8B5E34", "secondary": "#F2E8CF" },
+    { "id": "MIN", "city": "Minnesota",     "name": "Voyageurs",    "conf": "Harbor", "div": "North", "primary": "#2D6A4F", "secondary": "#B7E4C7" },
+
+    { "id": "ATL", "city": "Atlanta",       "name": "Firebirds",    "conf": "Harbor", "div": "South", "primary": "#3D0C02", "secondary": "#FF7B00" },
+    { "id": "CAR", "city": "Carolina",      "name": "Pines",        "conf": "Harbor", "div": "South", "primary": "#40916C", "secondary": "#FEFAE0" },
+    { "id": "NOL", "city": "New Orleans",   "name": "Krewe",        "conf": "Harbor", "div": "South", "primary": "#7209B7", "secondary": "#FFD166" },
+    { "id": "TPA", "city": "Tampa",         "name": "Manatees",     "conf": "Harbor", "div": "South", "primary": "#0077B6", "secondary": "#48CAE4" },
+
+    { "id": "ARZ", "city": "Arizona",       "name": "Scorpions",    "conf": "Harbor", "div": "West",  "primary": "#BC4749", "secondary": "#F2E8CF" },
+    { "id": "LAW", "city": "Los Angeles",   "name": "Wildfire",     "conf": "Harbor", "div": "West",  "primary": "#370617", "secondary": "#E85D04" },
+    { "id": "SFG", "city": "San Francisco", "name": "Fog",          "conf": "Harbor", "div": "West",  "primary": "#6C757D", "secondary": "#FCA311" },
+    { "id": "SEA", "city": "Seattle",       "name": "Orcas",        "conf": "Harbor", "div": "West",  "primary": "#000814", "secondary": "#F1FAEE" }
+  ]
+}

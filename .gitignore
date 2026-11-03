@@ -1,0 +1,18 @@
+# NEVER commit the real-player mapping or raw source data.
+private/
+*.mapping.json
+raw/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Roblox Studio place files (binary, large) - keep local backups only
+*.rbxl
+*.rbxl.lock
+*.rbxlx
+
+# OS
+Thumbs.db
+.DS_Store
