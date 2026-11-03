@@ -35,6 +35,10 @@ remote("RemoteEvent", "MatchState")
 local PackService = require(ServerScriptService.Modules.PackService)
 local LineupService = require(ServerScriptService.Modules.LineupService)
 local MatchService = require(ServerScriptService.Modules.Match.MatchService)
+local World = require(ServerScriptService.Modules.World)
+
+World.SetupLighting()
+World.BuildLobby()
 
 local function snapshotFor(player)
 	local profile = PlayerData.Get(player)
@@ -49,6 +53,7 @@ local function snapshotFor(player)
 		coins = profile.data.coins,
 		cards = cards,
 		lineup = profile.data.lineup,
+		stats = profile.data.stats,
 		dataVersion = CardDatabase.Version(),
 	}
 end

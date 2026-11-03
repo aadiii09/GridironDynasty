@@ -1,10 +1,17 @@
--- Footballer NPCs: blocky R15 rigs in team colors, driven by their card's attributes.
+-- Footballer NPCs: R15 rigs in full uniform (helmet + facemask, shoulder pads, jersey numbers,
+-- sleeves, gloves, pants, socks, cleats), body size by position, run/idle animations.
+-- Driven by their card's attributes.
+--
+-- If ServerStorage.Art has "Helmet" / "Pads" / "Football" MeshParts (AI-generated), those are
+-- used; otherwise the gear is built from parts.
 
 local Players = game:GetService("Players")
 local PhysicsService = game:GetService("PhysicsService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local MatchConfig = require(ReplicatedStorage.Shared.MatchConfig)
+local Assets = require(ReplicatedStorage.Shared.Assets)
 
 local Npc = {}
 Npc.__index = Npc
@@ -15,49 +22,271 @@ pcall(function()
 	PhysicsService:CollisionGroupSetCollidable(Npc.CollisionGroup, Npc.CollisionGroup, false)
 end)
 
-local SKIN = Color3.fromRGB(204, 142, 105)
-local templates = {} -- [colorKey] = Model (CreateHumanoidModelFromDescription is slow-ish; clone instead)
+local SKINS = {
+	Color3.fromRGB(234, 192, 160), Color3.fromRGB(204, 142, 105), Color3.fromRGB(160, 102, 70),
+	Color3.fromRGB(124, 78, 52), Color3.fromRGB(92, 58, 40),
+}
+local PANTS = Color3.fromRGB(236, 236, 240)
+local CLEATS = Color3.fromRGB(22, 22, 26)
+local MASK = Color3.fromRGB(205, 208, 214)
+local FONT_NUM = Font.fromEnum(Enum.Font.GothamBlack)
 
-local function template(primary, secondary)
-	local key = primary:ToHex() .. secondary:ToHex()
-	if templates[key] then
-		return templates[key]
+local BUILD = { -- body proportions by position group
+	OL = { width = 1.18, depth = 1.12, height = 1.02 },
+	DL = { width = 1.14, depth = 1.1, height = 1.02 },
+	TE = { width = 1.06, depth = 1.04, height = 1.04 },
+	LB = { width = 1.05, depth = 1.03, height = 1.0 },
+	QB = { width = 1.0, depth = 1.0, height = 1.03 },
+	RB = { width = 1.0, depth = 1.0, height = 0.96 },
+	WR = { width = 0.94, depth = 0.95, height = 1.04 },
+	CB = { width = 0.94, depth = 0.95, height = 1.0 },
+	S = { width = 0.97, depth = 0.97, height = 1.0 },
+}
+
+local rigCache = {} -- [build key] = Model (plain rig, cloned per NPC)
+
+local function baseRig(pos)
+	local b = BUILD[pos] or BUILD.QB
+	local key = pos
+	if rigCache[key] then
+		return rigCache[key]
 	end
 	local desc = Instance.new("HumanoidDescription")
-	desc.HeadColor = SKIN
-	desc.TorsoColor = primary
-	desc.LeftArmColor = primary
-	desc.RightArmColor = primary
-	desc.LeftLegColor = secondary
-	desc.RightLegColor = secondary
+	desc.WidthScale = b.width
+	desc.DepthScale = b.depth
+	desc.HeightScale = b.height
+	desc.HeadScale = 1
 	local model = Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15)
 	model.Name = "Footballer"
-	-- helmet
 	local head = model:FindFirstChild("Head")
-	if head then
-		local helmet = Instance.new("Part")
-		helmet.Name = "Helmet"
-		helmet.Shape = Enum.PartType.Ball
-		helmet.Size = Vector3.new(1.75, 1.75, 1.75)
-		helmet.Color = primary
-		helmet.Material = Enum.Material.SmoothPlastic
-		helmet.CanCollide = false
-		helmet.Massless = true
-		helmet.CFrame = head.CFrame * CFrame.new(0, 0.15, 0.1)
-		local weld = Instance.new("WeldConstraint")
-		weld.Part0 = head
-		weld.Part1 = helmet
-		weld.Parent = helmet
-		helmet.Parent = model
+	local face = head and head:FindFirstChildOfClass("Decal")
+	if face then
+		face:Destroy() -- the helmet covers the face
 	end
-	templates[key] = model
+	rigCache[key] = model
 	return model
+end
+
+local function weldTo(part, target, offset)
+	part.Anchored = false
+	part.CanCollide = false
+	part.CanQuery = false
+	part.Massless = true
+	part.CFrame = target.CFrame * offset
+	local w = Instance.new("WeldConstraint")
+	w.Part0 = target
+	w.Part1 = part
+	w.Parent = part
+	part.Parent = target.Parent
+	return part
+end
+
+local function newPart(props)
+	local p = Instance.new("Part")
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.Material = Enum.Material.SmoothPlastic
+	for k, v in props do
+		p[k] = v
+	end
+	return p
+end
+
+local function artMesh(name)
+	local folder = ServerStorage:FindFirstChild("Art")
+	local mesh = folder and folder:FindFirstChild(name)
+	return mesh and mesh:Clone() or nil
+end
+
+-- recolor an AI-generated mesh (drop its texture so the team color shows)
+local function paint(meshModel, color)
+	for _, d in (meshModel:IsA("BasePart") and { meshModel } or meshModel:GetDescendants()) do
+		if d:IsA("MeshPart") then
+			d.TextureID = ""
+			d.Color = color
+		elseif d:IsA("SurfaceAppearance") then
+			d:Destroy()
+		end
+	end
+end
+
+local function addHelmet(model, primary, secondary)
+	local head = model:FindFirstChild("Head")
+	if not head then
+		return
+	end
+	local mesh = artMesh("Helmet")
+	if mesh then
+		paint(mesh, primary)
+		local mask = mesh:FindFirstChild("facemask", true)
+		if mask and mask:IsA("BasePart") then
+			mask.Color = MASK
+		end
+		local parts = mesh:IsA("BasePart") and { mesh } or mesh:GetDescendants()
+		local pivot = mesh:GetPivot()
+		for _, p in parts do
+			if p:IsA("BasePart") then
+				local rel = pivot:ToObjectSpace(p.CFrame)
+				weldTo(p, head, CFrame.new(0, 0.12, 0.05) * CFrame.Angles(0, math.pi, 0) * rel)
+			end
+		end
+		return
+	end
+	-- built helmet: shell, center stripe, facemask bars, ear holes
+	weldTo(newPart({ Name = "Helmet", Shape = Enum.PartType.Ball, Size = Vector3.new(1.62, 1.62, 1.62), Color = primary, Material = Enum.Material.SmoothPlastic, Reflectance = 0.08 }), head, CFrame.new(0, 0.14, 0.06))
+	weldTo(newPart({ Name = "HelmetStripe", Size = Vector3.new(0.22, 0.12, 1.5), Color = secondary }), head, CFrame.new(0, 0.93, 0.08))
+	for i, y in { 0.12, -0.12, -0.36 } do
+		weldTo(newPart({ Name = "Mask", Size = Vector3.new(1.05 - i * 0.1, 0.09, 0.09), Color = MASK, Material = Enum.Material.Metal }), head, CFrame.new(0, y, -0.78))
+	end
+	for _, x in { -0.28, 0.28 } do
+		weldTo(newPart({ Name = "Mask", Size = Vector3.new(0.09, 0.55, 0.09), Color = MASK, Material = Enum.Material.Metal }), head, CFrame.new(x, -0.12, -0.8))
+	end
+	for _, x in { -0.81, 0.81 } do
+		weldTo(newPart({ Name = "EarHole", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.05, 0.28, 0.28), Color = Color3.fromRGB(20, 20, 24) }), head, CFrame.new(x, 0.05, 0.05))
+	end
+end
+
+local function addPads(model, primary, secondary)
+	local torso = model:FindFirstChild("UpperTorso")
+	if not torso then
+		return
+	end
+	local mesh = artMesh("Pads")
+	if mesh then
+		paint(mesh, primary)
+		local parts = mesh:IsA("BasePart") and { mesh } or mesh:GetDescendants()
+		local pivot = mesh:GetPivot()
+		local w = torso.Size.X / 2
+		for _, p in parts do
+			if p:IsA("BasePart") then
+				p.Size = p.Size * Vector3.new(w * 1.1, 1, 1)
+				weldTo(p, torso, CFrame.new(0, torso.Size.Y * 0.38, 0) * pivot:ToObjectSpace(p.CFrame))
+			end
+		end
+		return
+	end
+	local w = torso.Size.X
+	for _, sx in { -1, 1 } do
+		weldTo(newPart({ Name = "Pad", Shape = Enum.PartType.Cylinder, Size = Vector3.new(w * 0.5, 1.0, 1.15), Color = primary }), torso, CFrame.new(sx * w * 0.42, torso.Size.Y * 0.36, 0) * CFrame.Angles(0, 0, math.rad(90 + sx * 12)))
+	end
+	weldTo(newPart({ Name = "PadTop", Size = Vector3.new(w * 0.9, 0.3, torso.Size.Z * 1.12), Color = primary }), torso, CFrame.new(0, torso.Size.Y * 0.47, 0))
+	-- sleeve stripes
+	for _, armName in { "LeftUpperArm", "RightUpperArm" } do
+		local arm = model:FindFirstChild(armName)
+		if arm then
+			weldTo(newPart({ Name = "SleeveStripe", Size = arm.Size * Vector3.new(1.04, 0.16, 1.04), Color = secondary }), arm, CFrame.new(0, -arm.Size.Y * 0.32, 0))
+		end
+	end
+end
+
+local function addNumbers(model, number, lastName, primary, secondary)
+	local torso = model:FindFirstChild("UpperTorso")
+	if not torso then
+		return
+	end
+	local function surface(face, showName)
+		local sg = Instance.new("SurfaceGui")
+		sg.Face = face
+		sg.CanvasSize = Vector2.new(200, 200)
+		sg.LightInfluence = 1
+		sg.Adornee = torso
+		if showName then
+			local nm = Instance.new("TextLabel")
+			nm.BackgroundTransparency = 1
+			nm.Size = UDim2.fromScale(1, 0.2)
+			nm.Position = UDim2.fromScale(0, 0.06)
+			nm.FontFace = FONT_NUM
+			nm.TextScaled = true
+			nm.TextColor3 = secondary
+			nm.Text = string.upper(lastName or "")
+			nm.Parent = sg
+		end
+		local num = Instance.new("TextLabel")
+		num.BackgroundTransparency = 1
+		num.Size = UDim2.fromScale(1, showName and 0.66 or 0.7)
+		num.Position = UDim2.fromScale(0, showName and 0.27 or 0.2)
+		num.FontFace = FONT_NUM
+		num.TextScaled = true
+		num.TextColor3 = secondary
+		num.TextStrokeColor3 = primary:Lerp(Color3.new(0, 0, 0), 0.5)
+		num.TextStrokeTransparency = 0.2
+		num.Text = tostring(number or "")
+		num.Parent = sg
+		sg.Parent = torso
+	end
+	surface(Enum.NormalId.Front, false)
+	surface(Enum.NormalId.Back, true)
+end
+
+-- Paint body parts as a uniform
+local function dress(model, primary, secondary, skin)
+	local colors = {
+		Head = skin,
+		UpperTorso = primary,
+		LowerTorso = PANTS,
+		LeftUpperArm = primary, RightUpperArm = primary,
+		LeftLowerArm = skin, RightLowerArm = skin,
+		LeftHand = secondary, RightHand = secondary,
+		LeftUpperLeg = PANTS, RightUpperLeg = PANTS,
+		LeftLowerLeg = secondary, RightLowerLeg = secondary,
+		LeftFoot = CLEATS, RightFoot = CLEATS,
+	}
+	for name, color in colors do
+		local p = model:FindFirstChild(name)
+		if p then
+			p.Color = color
+			p.Material = name == "UpperTorso" and Enum.Material.Fabric or Enum.Material.SmoothPlastic
+		end
+	end
 end
 
 function Npc.SetCollisionGroup(model)
 	for _, d in model:GetDescendants() do
 		if d:IsA("BasePart") then
 			d.CollisionGroup = Npc.CollisionGroup
+		end
+	end
+end
+
+-- Helmet + pads on the player's own avatar during a game (removed afterwards)
+function Npc.Equip(character, primary, secondary)
+	local gear = Instance.new("Folder")
+	gear.Name = "MatchGear"
+	gear.Parent = character
+	local before = {}
+	for _, d in character:GetChildren() do
+		before[d] = true
+	end
+	addHelmet(character, primary, secondary)
+	addPads(character, primary, secondary)
+	for _, d in character:GetChildren() do
+		if not before[d] and d:IsA("BasePart") then
+			d.Parent = gear
+		end
+	end
+	for _, acc in character:GetChildren() do
+		if acc:IsA("Accessory") then
+			local handle = acc:FindFirstChild("Handle")
+			local att = handle and handle:FindFirstChildOfClass("Attachment")
+			if att and (att.Name:find("Hat") or att.Name:find("Hair") or att.Name:find("Face")) then
+				handle.LocalTransparencyModifier = 0
+				handle.Transparency = 1 -- hide hats/hair under the helmet
+				handle:SetAttribute("HiddenByGear", true)
+			end
+		end
+	end
+	return gear
+end
+
+function Npc.Unequip(character)
+	local gear = character:FindFirstChild("MatchGear")
+	if gear then
+		gear:Destroy()
+	end
+	for _, d in character:GetDescendants() do
+		if d:IsA("BasePart") and d:GetAttribute("HiddenByGear") then
+			d.Transparency = 0
+			d:SetAttribute("HiddenByGear", nil)
 		end
 	end
 end
@@ -77,7 +306,7 @@ function Npc.new(slotId, side, card, info, primary, secondary, parent)
 	self.nextThink = 0
 	self.target = nil
 
-	local model = template(primary, secondary):Clone()
+	local model = baseRig(card.pos):Clone()
 	model.Name = slotId
 	self.model = model
 	self.humanoid = model:FindFirstChildOfClass("Humanoid")
@@ -86,21 +315,27 @@ function Npc.new(slotId, side, card, info, primary, secondary, parent)
 	self.humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 	self.humanoid.BreakJointsOnDeath = false
 	self.humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+
+	local skin = SKINS[(tonumber((card.pid or ""):sub(-2), 16) or slotId:len()) % #SKINS + 1]
+	dress(model, primary, secondary, skin)
+	addPads(model, primary, secondary)
+	addHelmet(model, primary, secondary)
+	addNumbers(model, info and info.number, info and info.last, primary, secondary)
 	Npc.SetCollisionGroup(model)
 
 	-- name tag
 	local tag = Instance.new("BillboardGui")
 	tag.Name = "Tag"
-	tag.Size = UDim2.fromOffset(110, 34)
-	tag.StudsOffset = Vector3.new(0, 3.4, 0)
+	tag.Size = UDim2.fromOffset(120, 26)
+	tag.StudsOffset = Vector3.new(0, 3.6, 0)
 	tag.AlwaysOnTop = true
-	tag.MaxDistance = 120
+	tag.MaxDistance = 140
 	local label = Instance.new("TextLabel")
 	label.BackgroundTransparency = 1
 	label.Size = UDim2.fromScale(1, 1)
 	label.TextColor3 = Color3.new(1, 1, 1)
-	label.TextStrokeTransparency = 0.4
-	label.Font = Enum.Font.GothamBlack
+	label.TextStrokeTransparency = 0.3
+	label.FontFace = Font.fromEnum(Enum.Font.GothamBlack)
 	label.TextScaled = true
 	label.Text = ("%s %s"):format(card.pos, string.upper(info and info.last or ""))
 	label.Parent = tag
@@ -109,7 +344,50 @@ function Npc.new(slotId, side, card, info, primary, secondary, parent)
 
 	model.Parent = parent
 	self.root:SetNetworkOwner(nil)
+
+	-- animations (Roblox's default R15 run/idle)
+	local animator = self.humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", self.humanoid)
+	local function load(id, priority)
+		local a = Instance.new("Animation")
+		a.AnimationId = id
+		local ok, track = pcall(animator.LoadAnimation, animator, a)
+		if ok then
+			track.Priority = priority
+			return track
+		end
+		return nil
+	end
+	self.runTrack = load(Assets.Animations.run, Enum.AnimationPriority.Movement)
+	self.idleTrack = load(Assets.Animations.idle, Enum.AnimationPriority.Idle)
+	if self.idleTrack then
+		self.idleTrack:Play(0.2)
+	end
 	return self
+end
+
+-- Called ~10x a second: run animation follows actual speed.
+function Npc:Animate()
+	if self.hidden or not self.runTrack then
+		return
+	end
+	local speed = self:Velocity().Magnitude
+	if speed > 1.5 then
+		if not self.runTrack.IsPlaying then
+			self.runTrack:Play(0.15)
+		end
+		self.runTrack:AdjustSpeed(math.clamp(speed / 16, 0.6, 1.6))
+	elseif self.runTrack.IsPlaying then
+		self.runTrack:Stop(0.2)
+	end
+end
+
+-- Knocked down by a tackle
+function Npc:Fall()
+	if self.hidden then
+		return
+	end
+	self.humanoid:ChangeState(Enum.HumanoidStateType.FallingDown)
+	self.root:ApplyImpulse(self.root.CFrame.LookVector * self.root.AssemblyMass * 12 + Vector3.new(0, self.root.AssemblyMass * 8, 0))
 end
 
 function Npc:SetTag(text, color)
@@ -118,12 +396,17 @@ function Npc:SetTag(text, color)
 end
 
 function Npc:Place(cf)
+	self.humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
 	self.model:PivotTo(cf + Vector3.new(0, 3, 0))
 	self.root.AssemblyLinearVelocity = Vector3.zero
+	self.root.AssemblyAngularVelocity = Vector3.zero
 	self.humanoid:Move(Vector3.zero)
 	self.target = nil
 	self.stunUntil = 0
 	self.engagedUntil = 0
+	if self.runTrack and self.runTrack.IsPlaying then
+		self.runTrack:Stop(0.1)
+	end
 end
 
 function Npc:Position()
@@ -144,7 +427,7 @@ function Npc:Hide(hidden)
 		if d:IsA("BasePart") then
 			d.LocalTransparencyModifier = 0
 			d.Transparency = hidden and 1 or (d.Name == "HumanoidRootPart" and 1 or 0)
-		elseif d:IsA("BillboardGui") then
+		elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
 			d.Enabled = not hidden
 		elseif d:IsA("Decal") then
 			d.Transparency = hidden and 1 or 0

@@ -230,6 +230,7 @@ local function placeAvatar(m, cf, speed)
 end
 
 local function lineUp(m)
+	clearRings(m)
 	local userBall = m.possession == "user"
 	for slotId, unit in m.units.Offense do
 		local spot = MatchConfig.Formation.Offense[slotId]
@@ -263,14 +264,116 @@ local function lineUp(m)
 	m.ball.Parent = m.field.model
 end
 
+local function clearRings(m)
+	for _, ring in m.rings or {} do
+		ring:Destroy()
+	end
+	m.rings = {}
+end
+
 local function tagTargets(m)
+	clearRings(m)
 	for i, slotId in MatchConfig.Targets do
 		local unit = m.units.Offense[slotId]
 		local route = m.call and m.call.routes[slotId]
 		if type(route) == "table" and not m.call.run then
 			unit:SetTag(("[%d] %s %s"):format(i, unit.card.pos, nameOf(unit)), GOLD)
+			-- glowing target ring at his feet
+			local ring = Instance.new("Part")
+			ring.Name = "TargetRing"
+			ring.Shape = Enum.PartType.Cylinder
+			ring.Size = Vector3.new(0.15, 5, 5)
+			ring.Material = Enum.Material.Neon
+			ring.Color = GOLD
+			ring.Transparency = 0.35
+			ring.CanCollide = false
+			ring.CanQuery = false
+			ring.Massless = true
+			ring.CastShadow = false
+			ring.CFrame = CFrame.new(unit.root.Position - Vector3.new(0, unit.humanoid.HipHeight + unit.root.Size.Y / 2 - 0.1, 0)) * CFrame.Angles(0, 0, math.rad(90))
+			local weld = Instance.new("WeldConstraint")
+			weld.Part0 = unit.root
+			weld.Part1 = ring
+			weld.Parent = ring
+			ring.Parent = unit.model
+			table.insert(m.rings, ring)
 		end
 	end
+end
+
+local function burst(m, pos, color, count, kind)
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.Transparency = 1
+	p.Size = Vector3.new(1, 1, 1)
+	p.Position = pos
+	local e = Instance.new("ParticleEmitter")
+	if kind == "confetti" then
+		e.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, color), ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)), ColorSequenceKeypoint.new(1, GOLD) })
+		e.Size = NumberSequence.new(0.5)
+		e.Speed = NumberRange.new(30, 55)
+		e.SpreadAngle = Vector2.new(45, 45)
+		e.Acceleration = Vector3.new(0, -30, 0)
+		e.Lifetime = NumberRange.new(2.5, 4)
+		e.RotSpeed = NumberRange.new(-300, 300)
+		e.Rotation = NumberRange.new(0, 360)
+		e.EmissionDirection = Enum.NormalId.Top
+		e.LightEmission = 0.3
+	else -- tackle dust
+		e.Color = ColorSequence.new(Color3.fromRGB(180, 200, 160))
+		e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 4) })
+		e.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.4), NumberSequenceKeypoint.new(1, 1) })
+		e.Speed = NumberRange.new(6, 12)
+		e.SpreadAngle = Vector2.new(180, 30)
+		e.Lifetime = NumberRange.new(0.5, 0.9)
+		e.Acceleration = Vector3.new(0, 4, 0)
+	end
+	e.Rate = 0
+	e.Parent = p
+	p.Parent = m.field.model
+	e:Emit(count)
+	task.delay(5, function()
+		p:Destroy()
+	end)
+end
+
+local function makeBall()
+	local art = game:GetService("ServerStorage"):FindFirstChild("Art")
+	local mesh = art and art:FindFirstChild("Football")
+	local ball
+	if mesh and mesh:IsA("BasePart") then
+		ball = mesh:Clone()
+	else
+		ball = Instance.new("Part")
+		ball.Size = Vector3.new(0.75, 0.75, 1.25)
+		ball.Color = Color3.fromRGB(122, 64, 34)
+		ball.Material = Enum.Material.Leather
+		local sm = Instance.new("SpecialMesh")
+		sm.MeshType = Enum.MeshType.Sphere
+		sm.Parent = ball
+	end
+	ball.Name = "Football"
+	ball.Anchored = true
+	ball.CanCollide = false
+	ball.CanQuery = false
+	local a0 = Instance.new("Attachment")
+	a0.Position = Vector3.new(0, 0.2, 0)
+	a0.Parent = ball
+	local a1 = Instance.new("Attachment")
+	a1.Position = Vector3.new(0, -0.2, 0)
+	a1.Parent = ball
+	local trail = Instance.new("Trail")
+	trail.Attachment0 = a0
+	trail.Attachment1 = a1
+	trail.Lifetime = 0.35
+	trail.Color = ColorSequence.new(Color3.new(1, 1, 1))
+	trail.Transparency = NumberSequence.new(0.3, 1)
+	trail.LightEmission = 0.6
+	trail.Enabled = false
+	trail.Parent = ball
+	return ball, trail
 end
 
 -- All defenders that can tackle / cover right now (NPCs + you when you're on defense)
@@ -400,7 +503,16 @@ local function attemptTackle(m, def, now)
 	local p = math.clamp(0.6 + ((def.attrs.TAK or 50) - elusive) * 0.012, 0.25, 0.93)
 	def.tackleReadyAt = now + (def.isAvatar and 0.8 or 1.4)
 	if rng:NextNumber() < p then
-		local _, fy = m.field:ToField(carrierPos(m))
+		local pos = carrierPos(m)
+		local _, fy = m.field:ToField(pos)
+		-- the ball carrier goes down
+		local c = m.play.carrier
+		if c == "avatar" then
+			remotes.MatchState:FireClient(m.player, { event = "fall" })
+		elseif c then
+			c:Fall()
+		end
+		burst(m, pos - Vector3.new(0, 2.5, 0), nil, 14, "dust")
 		endPlay(m, m.play.state == "dropback" and "sack" or "tackle", fy, def)
 	else
 		def.stunUntil = now + (def.isAvatar and 0.5 or 0.7)
@@ -597,6 +709,12 @@ local function think(m, now)
 	if not userBall and play.state == "dropback" and not m.call.run then
 		cpuQbDecide(m, now)
 	end
+
+	for _, side in m.units do
+		for _, unit in side do
+			unit:Animate()
+		end
+	end
 end
 
 local function updateBall(m, now)
@@ -605,9 +723,14 @@ local function updateBall(m, now)
 		local a = play.air
 		local s = math.clamp((now - a.t0) / a.T, 0, 1)
 		local p = a.from:Lerp(a.to, s) + Vector3.new(0, 4 * a.h * s * (1 - s), 0)
-		m.ball.CFrame = CFrame.new(p)
+		-- spiral: nose follows the flight path and the ball spins
+		local ahead = a.from:Lerp(a.to, math.min(s + 0.02, 1)) + Vector3.new(0, 4 * a.h * (s + 0.02) * (1 - s - 0.02), 0)
+		local look = (ahead - p).Magnitude > 0.01 and CFrame.lookAt(p, ahead) or CFrame.new(p)
+		m.ball.CFrame = look * CFrame.Angles(0, 0, now * 25)
+		m.ballTrail.Enabled = true
 		return s >= 1
 	end
+	m.ballTrail.Enabled = false
 	local holder
 	if play.carrier == "avatar" then
 		holder = m.player.Character
@@ -754,8 +877,12 @@ function endPlay(m, result, spotY, defender, receiver)
 	for _, side in m.units do
 		for _, unit in side do
 			unit.humanoid:Move(Vector3.zero)
+			if unit.runTrack and unit.runTrack.IsPlaying then
+				unit.runTrack:Stop(0.4)
+			end
 		end
 	end
+	m.ballTrail.Enabled = false
 	local _, hum = avatarParts(m)
 	if hum then
 		hum.WalkSpeed = 0
@@ -778,6 +905,10 @@ function endPlay(m, result, spotY, defender, receiver)
 			msg = string.upper(m.cpu.team.name) .. " TOUCHDOWN"
 		end
 		color, driveOver = good, true
+		local ez = MatchConfig.EndZoneYards * Y
+		for _, x in { -20, 0, 20 } do
+			burst(m, m.field:ToWorld(x, L + ez / 2, 1), userBall and USER_SECONDARY or Color3.fromHex(m.cpu.team.secondary), 70, "confetti")
+		end
 	elseif result == "int" then
 		msg = (userBall and "INTERCEPTED by " or "INTERCEPTION by ") .. nameOf(defender) .. (userBall and "" or "!")
 		color, driveOver = bad, true
@@ -829,6 +960,7 @@ function endPlay(m, result, spotY, defender, receiver)
 	end
 
 	m.phase = "result"
+	m.field:SetScreen(("YOU %d  -  %d %s"):format(m.score.you, m.score.cpu, string.upper(m.cpu.team.name)))
 	log(("%s ball, %s/%s: %s after %.1fs -> %s"):format(m.possession, m.call and m.call.id or "?", m.defCall or "?", result, os.clock() - (play.t0 or os.clock()), msg))
 	sendState(m, msg, color)
 	local token = m.token
@@ -1038,6 +1170,7 @@ local function cleanup(m)
 	if root and m.player.Parent then
 		root.Anchored = false
 		hum.WalkSpeed = 16
+		Npc.Unequip(char)
 		for _, d in char:GetDescendants() do
 			if d:IsA("BasePart") then
 				d.CollisionGroup = "Default"
@@ -1089,23 +1222,19 @@ function MatchService.Start(remoteFolder)
 			drive = 1,
 		}
 		matches[player] = m
-		m.field = Field.new(USER_SECONDARY, cpuPrimary)
+		m.field = Field.new(Color3.fromRGB(16, 120, 80), cpuPrimary, {
+			homeName = "GRIDIRON",
+			awayName = cpuTeam.name,
+			screenText = ("YOU 0  -  0 %s"):format(string.upper(cpuTeam.name)),
+			crowd = { USER_SECONDARY, USER_PRIMARY, cpuPrimary, cpuSecondary, Color3.fromRGB(240, 240, 245) },
+		})
 		m.user = buildTeam(m, userCards, userInfos, USER_PRIMARY, USER_SECONDARY)
 		m.cpu = buildTeam(m, cpuCards, cpuInfos, cpuPrimary, cpuSecondary)
 		m.cpu.team = cpuTeam
-
-		local ball = Instance.new("Part")
-		ball.Name = "Football"
-		ball.Shape = Enum.PartType.Ball
-		ball.Size = Vector3.new(1.1, 1.1, 1.1)
-		ball.Color = Color3.fromRGB(122, 66, 36)
-		ball.Material = Enum.Material.Leather
-		ball.Anchored = true
-		ball.CanCollide = false
-		ball.CanQuery = false
-		m.ball = ball
+		m.ball, m.ballTrail = makeBall()
 
 		Npc.SetCollisionGroup(char)
+		Npc.Equip(char, USER_PRIMARY, USER_SECONDARY)
 		m.charConn = player.CharacterAdded:Connect(function()
 			cleanup(m) -- died/respawned mid-game: end it
 		end)
