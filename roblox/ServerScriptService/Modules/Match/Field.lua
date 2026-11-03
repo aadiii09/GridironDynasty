@@ -138,7 +138,11 @@ function Field.new(homeColor, awayColor, opts)
 	end
 
 	-- stands + crowd on both sidelines -----------------------------------------------------
-	local crowd = opts.crowd or { homeColor, awayColor, WHITE, Color3.fromRGB(40, 40, 46) }
+	-- crowd colors are toned down so the stadium lights + bloom don't blow them out
+	local crowd = {}
+	for _, c in opts.crowd or { homeColor, awayColor, WHITE, Color3.fromRGB(40, 40, 46) } do
+		table.insert(crowd, c:Lerp(Color3.fromRGB(30, 30, 38), 0.35))
+	end
 	local rng = Random.new(self.origin.X)
 	local standLen = L + EZ * 2 + 10
 	for _, side in { -1, 1 } do
@@ -186,9 +190,9 @@ function Field.new(homeColor, awayColor, opts)
 			local head = part({ Size = Vector3.new(14, 8, 1.5), CFrame = CFrame.lookAt(base + Vector3.new(0, 72, 0), mid), Color = Color3.fromRGB(255, 250, 230), Material = Enum.Material.Neon }, deco)
 			local light = Instance.new("SpotLight")
 			light.Face = Enum.NormalId.Front
-			light.Range = 180
-			light.Angle = 70
-			light.Brightness = 3.5
+			light.Range = 160
+			light.Angle = 60
+			light.Brightness = 1.8
 			light.Color = Color3.fromRGB(255, 246, 225)
 			light.Shadows = false
 			light.Parent = head
@@ -279,10 +283,10 @@ function Field:CFrameAt(x, y, h, facingDownfield)
 end
 
 function Field:SetMarkers(losY, firstDownY)
-	self.losMarker.Transparency = 0
+	self.losMarker.Transparency = 0.45
 	self.losMarker.Position = self:ToWorld(0, losY, 0.1)
 	self.firstDownMarker.Position = self:ToWorld(0, math.min(firstDownY, MatchConfig.FieldLength()), 0.1)
-	self.firstDownMarker.Transparency = firstDownY >= MatchConfig.FieldLength() and 1 or 0
+	self.firstDownMarker.Transparency = firstDownY >= MatchConfig.FieldLength() and 1 or 0.3
 end
 
 function Field:SetScreen(text)

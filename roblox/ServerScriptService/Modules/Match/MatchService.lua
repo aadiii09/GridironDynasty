@@ -230,7 +230,10 @@ local function placeAvatar(m, cf, speed)
 end
 
 local function lineUp(m)
-	clearRings(m)
+	for _, ring in m.rings or {} do
+		ring:Destroy()
+	end
+	m.rings = {}
 	local userBall = m.possession == "user"
 	for slotId, unit in m.units.Offense do
 		local spot = MatchConfig.Formation.Offense[slotId]
@@ -340,11 +343,23 @@ local function burst(m, pos, color, count, kind)
 end
 
 local function makeBall()
-	local art = game:GetService("ServerStorage"):FindFirstChild("Art")
+	local art = ReplicatedStorage:FindFirstChild("Art")
 	local mesh = art and art:FindFirstChild("Football")
 	local ball
 	if mesh and mesh:IsA("BasePart") then
-		ball = mesh:Clone()
+		-- AI football: its long axis is X; wrap it so the long axis points along -Z (flight direction)
+		ball = Instance.new("Part")
+		ball.Size = Vector3.new(0.8, 0.8, 1.2)
+		ball.Transparency = 1
+		local m = mesh:Clone()
+		m.Size = m.Size * 1.7
+		m.Anchored = false
+		m.CFrame = CFrame.Angles(0, math.rad(90), 0)
+		local w = Instance.new("WeldConstraint")
+		w.Part0 = ball
+		w.Part1 = m
+		w.Parent = m
+		m.Parent = ball
 	else
 		ball = Instance.new("Part")
 		ball.Size = Vector3.new(0.75, 0.75, 1.25)
@@ -1161,7 +1176,9 @@ local function cleanup(m)
 			end
 		end
 	end
-	m.field:Destroy()
+	if m.field then
+		m.field:Destroy()
+	end
 	if m.charConn then
 		m.charConn:Disconnect()
 	end
@@ -1222,25 +1239,34 @@ function MatchService.Start(remoteFolder)
 			drive = 1,
 		}
 		matches[player] = m
-		m.field = Field.new(Color3.fromRGB(16, 120, 80), cpuPrimary, {
-			homeName = "GRIDIRON",
-			awayName = cpuTeam.name,
-			screenText = ("YOU 0  -  0 %s"):format(string.upper(cpuTeam.name)),
-			crowd = { USER_SECONDARY, USER_PRIMARY, cpuPrimary, cpuSecondary, Color3.fromRGB(240, 240, 245) },
-		})
-		m.user = buildTeam(m, userCards, userInfos, USER_PRIMARY, USER_SECONDARY)
-		m.cpu = buildTeam(m, cpuCards, cpuInfos, cpuPrimary, cpuSecondary)
-		m.cpu.team = cpuTeam
-		m.ball, m.ballTrail = makeBall()
+		local buildStart = os.clock()
+		local ok, err = pcall(function()
+			m.field = Field.new(Color3.fromRGB(16, 120, 80), cpuPrimary, {
+				homeName = "GRIDIRON",
+				awayName = cpuTeam.name,
+				screenText = ("YOU 0  -  0 %s"):format(string.upper(cpuTeam.name)),
+				crowd = { USER_SECONDARY, USER_PRIMARY, cpuPrimary, cpuSecondary, Color3.fromRGB(240, 240, 245) },
+			})
+			m.user = buildTeam(m, userCards, userInfos, USER_PRIMARY, USER_SECONDARY)
+			m.cpu = buildTeam(m, cpuCards, cpuInfos, cpuPrimary, cpuSecondary)
+			m.cpu.team = cpuTeam
+			m.ball, m.ballTrail = makeBall()
 
-		Npc.SetCollisionGroup(char)
-		Npc.Equip(char, USER_PRIMARY, USER_SECONDARY)
-		m.charConn = player.CharacterAdded:Connect(function()
-			cleanup(m) -- died/respawned mid-game: end it
+			Npc.SetCollisionGroup(char)
+			Npc.Equip(char, USER_PRIMARY, USER_SECONDARY)
+			m.charConn = player.CharacterAdded:Connect(function()
+				cleanup(m) -- died/respawned mid-game: end it
+			end)
+
+			log(player.Name, "vs", cpuTeam.city, cpuTeam.name, "you", m.user.ratings.ovr, "cpu", m.cpu.ratings.ovr, ("built in %.1fs"):format(os.clock() - buildStart))
+			startDrive(m, "user")
 		end)
-
-		log(player.Name, "vs", cpuTeam.city, cpuTeam.name, "you", m.user.ratings.ovr, "cpu", m.cpu.ratings.ovr)
-		startDrive(m, "user")
+		if not ok then
+			warn("[Match] couldn't start:", err)
+			pcall(cleanup, m)
+			matches[player] = nil
+			return { ok = false, err = "Couldn't start the game, please try again." }
+		end
 		return { ok = true }
 	end
 

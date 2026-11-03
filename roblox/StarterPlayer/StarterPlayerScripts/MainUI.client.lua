@@ -90,10 +90,10 @@ task.spawn(function()
 		headshot.Image = img
 	end
 end)
-UI.text({ Text = player.DisplayName, FontFace = F.Heavy, Size = UDim2.new(1, -90, 0, 24), Position = UDim2.fromOffset(80, 12), TextXAlignment = Enum.TextXAlignment.Left }).Parent = profile
-local recordLabel = UI.text({ Text = "", FontFace = F.Medium, TextColor3 = C.Muted, Size = UDim2.new(1, -90, 0, 16), Position = UDim2.fromOffset(80, 40), TextXAlignment = Enum.TextXAlignment.Left })
+UI.text({ Text = player.DisplayName, FontFace = F.Heavy, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -94, 0, 24), Position = UDim2.fromOffset(80, 10), TextXAlignment = Enum.TextXAlignment.Left }).Parent = profile
+local recordLabel = UI.text({ Text = "", FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 13, Size = UDim2.new(0, 130, 0, 22), Position = UDim2.fromOffset(80, 44), TextXAlignment = Enum.TextXAlignment.Left })
 recordLabel.Parent = profile
-local teamChip = UI.chip("TEAM --", C.Accent, { Position = UDim2.fromOffset(222, 12), TextColor3 = C.BG })
+local teamChip = UI.chip("TEAM --", C.Accent, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 44), TextColor3 = C.BG })
 teamChip.Parent = profile
 
 local coinPill = UI.glass({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 66), Size = UDim2.fromOffset(190, 50) })
@@ -155,7 +155,7 @@ tile("collection", "COLLECTION", C.Blue, 3, function()
 	renderCollection()
 end)
 
-local playButton = UI.button({ kind = "primary", text = "PLAY", icon = "football", size = UDim2.fromOffset(250, 100), order = 4, textSize = 34, radius = 16 }, function()
+local playButton = UI.button({ kind = "primary", text = "PLAY", icon = "football", iconScale = 0.5, size = UDim2.fromOffset(250, 100), order = 4, textSize = 34, radius = 16 }, function()
 	startMatch()
 end)
 playButton.Parent = dock
@@ -880,9 +880,14 @@ function startMatch()
 	starting = true
 	closePanels()
 	UI.setButton(playButton, "LOADING")
-	local res = Remotes:WaitForChild("StartMatch"):InvokeServer()
+	local ok, res = pcall(function()
+		return Remotes:WaitForChild("StartMatch"):InvokeServer()
+	end)
 	UI.setButton(playButton, "PLAY")
 	starting = false
+	if not ok or not res then
+		res = { ok = false }
+	end
 	if not res.ok then
 		toast(res.err or "Couldn't start a game", C.Red)
 	end
@@ -904,7 +909,7 @@ local function applyInventory(inv)
 	if inv.coins > oldCoins and oldCoins > 0 then
 		UI.pop(coinPill, 0.3)
 	end
-	recordLabel.Text = ("RECORD  %d W  -  %d L"):format(state.stats.wins or 0, state.stats.losses or 0)
+	recordLabel.Text = ("%d W  -  %d L"):format(state.stats.wins or 0, state.stats.losses or 0)
 	CardData.Ensure()
 	teamChip.Text = "TEAM " .. teamRatings().ovr
 	if collectionPanel.Visible and not overlay.Visible then

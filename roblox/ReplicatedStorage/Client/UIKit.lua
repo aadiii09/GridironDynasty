@@ -137,9 +137,7 @@ function UI.button(opts, onClick)
 	})
 	content.Parent = b
 	if opts.icon then
-		UI.icon(opts.icon, { Size = UDim2.fromScale(0, 0.9), SizeConstraint = Enum.SizeConstraint.RelativeYY, ImageColor3 = kind.text, LayoutOrder = 1, ZIndex = b.ZIndex }).Parent = content
-		local ic = content:FindFirstChildWhichIsA("GuiObject")
-		new("UIAspectRatioConstraint", { AspectRatio = 1 }).Parent = ic
+		UI.icon(opts.icon, { Name = "Icon", Size = UDim2.fromScale(opts.iconScale or 0.75, opts.iconScale or 0.75), SizeConstraint = Enum.SizeConstraint.RelativeYY, ImageColor3 = kind.text, LayoutOrder = 1, ZIndex = b.ZIndex }).Parent = content
 	end
 	local label = UI.text({ Name = "Label", Text = opts.text or "", FontFace = UI.Font.Heavy, TextColor3 = kind.text, Size = UDim2.new(0, 0, 0.82, 0), AutomaticSize = Enum.AutomaticSize.X, TextScaled = false, TextSize = opts.textSize or 18, LayoutOrder = 2, ZIndex = b.ZIndex })
 	if opts.text == nil or opts.text == "" then
@@ -179,8 +177,8 @@ function UI.setButton(b, textValue, kindName)
 		if label then
 			label.TextColor3 = kind.text
 		end
-		local ic = b.Content:FindFirstChildWhichIsA("ImageLabel")
-		if ic then
+		local ic = b.Content:FindFirstChild("Icon")
+		if ic and ic:IsA("ImageLabel") then
 			ic.ImageColor3 = kind.text
 		end
 		b:SetAttribute("Kind", kindName)

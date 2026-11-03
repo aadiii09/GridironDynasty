@@ -107,17 +107,46 @@ local function buildFigure(primary, secondary)
 	part(Vector3.new(0.9, 0.8, 0.9), CFrame.new(0.5, -2.45, -0.9) * CFrame.Angles(math.rad(-28), 0, 0), secondary)
 	part(Vector3.new(0.95, 0.35, 1.2), CFrame.new(-0.5, -3.15, 0.55), dark)
 	part(Vector3.new(0.95, 0.35, 1.2), CFrame.new(0.5, -2.9, -1.1) * CFrame.Angles(math.rad(-20), 0, 0), dark)
-	-- helmet: shell, stripe, facemask cage, face
+	-- helmet: AI-made helmet + pads meshes when available, otherwise built from parts
 	part(Vector3.new(0.6, 0.35, 0.6), CFrame.new(0, 1.2, 0), skin)
-	part(Vector3.new(1.85, 1.85, 1.85), CFrame.new(0, 2.0, 0.05), primary, Enum.PartType.Ball, Enum.Material.SmoothPlastic)
-	part(Vector3.new(0.3, 0.3, 1.9), CFrame.new(0, 2.85, 0.05), secondary)
-	part(Vector3.new(0.95, 0.75, 0.3), CFrame.new(0, 1.9, -0.72), skin)
-	local mask = Color3.fromRGB(210, 210, 215)
-	for i, y in { 2.15, 1.85, 1.55 } do
-		part(Vector3.new(1.25 - i * 0.12, 0.1, 0.1), CFrame.new(0, y, -0.95), mask)
+	local art = ReplicatedStorage:FindFirstChild("Art")
+	local helmet = art and art:FindFirstChild("Helmet")
+	local pads = art and art:FindFirstChild("Pads")
+	if pads then
+		local p = pads:Clone()
+		p.TextureID = ""
+		p.Color = primary
+		p.Material = Enum.Material.Fabric
+		p.Size = Vector3.new(2.7, 2.3, 1.5)
+		p.CFrame = CFrame.new(0, 0.25, 0)
+		p.Parent = model
 	end
-	for _, x in { -0.25, 0.25 } do
-		part(Vector3.new(0.1, 0.7, 0.1), CFrame.new(x, 1.85, -0.97), mask)
+	if helmet then
+		local h = helmet:Clone()
+		local pivot = h:GetPivot()
+		local scale = 2.05 / 1.94
+		for _, p in h:GetDescendants() do
+			if p:IsA("MeshPart") then
+				local rel = pivot:ToObjectSpace(p.CFrame)
+				p.TextureID = ""
+				p.Color = p.Name == "facemask" and Color3.fromRGB(205, 208, 214) or primary
+				p.Material = p.Name == "facemask" and Enum.Material.Metal or Enum.Material.SmoothPlastic
+				p.Size = p.Size * scale
+				p.CFrame = CFrame.new(0, 2.0, 0) * (rel - rel.Position) + rel.Position * scale
+			end
+		end
+		h.Parent = model
+	else
+		part(Vector3.new(1.85, 1.85, 1.85), CFrame.new(0, 2.0, 0.05), primary, Enum.PartType.Ball, Enum.Material.SmoothPlastic)
+		part(Vector3.new(0.3, 0.3, 1.9), CFrame.new(0, 2.85, 0.05), secondary)
+		part(Vector3.new(0.95, 0.75, 0.3), CFrame.new(0, 1.9, -0.72), skin)
+		local mask = Color3.fromRGB(210, 210, 215)
+		for i, y in { 2.15, 1.85, 1.55 } do
+			part(Vector3.new(1.25 - i * 0.12, 0.1, 0.1), CFrame.new(0, y, -0.95), mask)
+		end
+		for _, x in { -0.25, 0.25 } do
+			part(Vector3.new(0.1, 0.7, 0.1), CFrame.new(x, 1.85, -0.97), mask)
+		end
 	end
 	model:PivotTo(CFrame.Angles(0, math.rad(-22), 0))
 	return model
@@ -129,9 +158,10 @@ local function addFigure(parent, primary, secondary)
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(0.92, 0.56),
 		Position = UDim2.fromScale(0.04, 0.13),
-		Ambient = Color3.fromRGB(120, 120, 130),
-		LightColor = Color3.fromRGB(255, 250, 240),
-		LightDirection = Vector3.new(-0.6, -0.8, -1),
+		-- camera looks toward +Z, so light travels +Z to hit the player's front
+		Ambient = Color3.fromRGB(150, 150, 162),
+		LightColor = Color3.fromRGB(255, 252, 245),
+		LightDirection = Vector3.new(0.45, -0.55, 1),
 		ZIndex = 4,
 	})
 	buildFigure(primary, secondary).Parent = vp

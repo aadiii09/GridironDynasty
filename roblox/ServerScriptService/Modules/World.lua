@@ -21,11 +21,11 @@ local function effect(className, name, props)
 end
 
 function World.SetupLighting()
-	Lighting.ClockTime = 18.3 -- golden hour, stadium lights on
+	Lighting.ClockTime = 17.1 -- late-afternoon golden light, stadium lights on
 	Lighting.GeographicLatitude = 35
-	Lighting.Brightness = 2.2
-	Lighting.Ambient = Color3.fromRGB(70, 66, 80)
-	Lighting.OutdoorAmbient = Color3.fromRGB(120, 112, 130)
+	Lighting.Brightness = 3
+	Lighting.Ambient = Color3.fromRGB(96, 92, 108)
+	Lighting.OutdoorAmbient = Color3.fromRGB(150, 144, 160)
 	Lighting.EnvironmentDiffuseScale = 0.6
 	Lighting.EnvironmentSpecularScale = 0.6
 	Lighting.GlobalShadows = true
@@ -34,12 +34,12 @@ function World.SetupLighting()
 		Lighting.Technology = Enum.Technology.Future
 	end)
 	effect("Atmosphere", "StadiumAtmosphere", {
-		Density = 0.28,
-		Offset = 0.15,
-		Color = Color3.fromRGB(255, 196, 160),
-		Decay = Color3.fromRGB(110, 90, 140),
-		Glare = 0.4,
-		Haze = 1.4,
+		Density = 0.24,
+		Offset = 0.2,
+		Color = Color3.fromRGB(255, 214, 180),
+		Decay = Color3.fromRGB(140, 120, 160),
+		Glare = 0.3,
+		Haze = 1.1,
 	})
 	effect("BloomEffect", "StadiumBloom", { Intensity = 0.55, Size = 26, Threshold = 1.15 })
 	effect("ColorCorrectionEffect", "StadiumGrade", { Contrast = 0.12, Saturation = 0.12, Brightness = 0.02, TintColor = Color3.fromRGB(255, 246, 236) })

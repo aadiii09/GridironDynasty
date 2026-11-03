@@ -30,7 +30,7 @@ local function teamBox(xScale, align)
 	local box = new("Frame", { BackgroundColor3 = C.Panel2, Size = UDim2.new(0.5, -50, 0, 52), Position = UDim2.new(xScale, xScale == 0 and 8 or 42, 0, 8) }, { UI.corner(10) })
 	local logo = new("ImageLabel", { BackgroundTransparency = 1, Size = UDim2.fromOffset(40, 40), Position = align == "left" and UDim2.fromOffset(6, 6) or UDim2.new(1, -46, 0, 6) })
 	logo.Parent = box
-	local name = UI.text({ FontFace = F.Heavy, TextScaled = false, TextSize = 17, Size = UDim2.new(1, -110, 1, 0), Position = align == "left" and UDim2.fromOffset(52, 0) or UDim2.fromOffset(58, 0), TextXAlignment = align == "left" and Enum.TextXAlignment.Left or Enum.TextXAlignment.Right })
+	local name = UI.text({ FontFace = F.Heavy, TextScaled = false, TextSize = 17, TextTruncate = Enum.TextTruncate.AtEnd, TextWrapped = false, Size = UDim2.new(1, -110, 1, 0), Position = align == "left" and UDim2.fromOffset(52, 0) or UDim2.fromOffset(58, 0), TextXAlignment = align == "left" and Enum.TextXAlignment.Left or Enum.TextXAlignment.Right })
 	name.Parent = box
 	local score = UI.text({ FontFace = F.Heavy, TextScaled = false, TextSize = 30, Size = UDim2.fromOffset(50, 52), Position = align == "left" and UDim2.new(1, -54, 0, 0) or UDim2.fromOffset(4, 0) })
 	score.Parent = box
@@ -45,7 +45,7 @@ UI.text({ Text = "VS", FontFace = F.Heavy, TextColor3 = C.Muted, TextScaled = fa
 local situation = UI.text({ FontFace = F.Heavy, TextColor3 = C.Text, TextScaled = false, TextSize = 14, Size = UDim2.new(1, -20, 0, 18), Position = UDim2.fromOffset(10, 64) })
 situation.Parent = bug
 
-local quit = UI.button({ kind = "dark", text = "QUIT", size = UDim2.fromOffset(90, 40), anchor = Vector2.new(1, 0), position = UDim2.new(1, -16, 0, 66), textSize = 14 }, function()
+local quit = UI.button({ kind = "dark", text = "QUIT", size = UDim2.fromOffset(112, 42), anchor = Vector2.new(1, 0), position = UDim2.new(1, -16, 0, 66), textSize = 14 }, function()
 	MatchAction:FireServer("leave")
 end)
 quit.Parent = gui
@@ -153,10 +153,12 @@ local function render()
 		return
 	end
 	local userBall = s.possession == "user"
-	youBox.name.Text = string.upper(player.DisplayName):sub(1, 12)
+	youBox.name.Text = string.upper(player.DisplayName)
 	youBox.score.Text = tostring(s.you)
 	youBox.box.BackgroundColor3 = Color3.fromRGB(16, 60, 40)
-	youBox.logo.Image = ""
+	youBox.logo.Image = Assets.icon_football
+	youBox.logo.ImageColor3 = C.Accent
+	youBox.logo.ScaleType = Enum.ScaleType.Fit
 	cpuBox.name.Text = string.upper(s.opponent.name)
 	cpuBox.score.Text = tostring(s.cpu)
 	cpuBox.box.BackgroundColor3 = Color3.fromHex(s.opponent.primary):Lerp(Color3.new(0, 0, 0), 0.35)

@@ -93,7 +93,7 @@ local function newPart(props)
 end
 
 local function artMesh(name)
-	local folder = ServerStorage:FindFirstChild("Art")
+	local folder = ReplicatedStorage:FindFirstChild("Art") or ServerStorage:FindFirstChild("Art")
 	local mesh = folder and folder:FindFirstChild(name)
 	return mesh and mesh:Clone() or nil
 end
@@ -117,17 +117,24 @@ local function addHelmet(model, primary, secondary)
 	end
 	local mesh = artMesh("Helmet")
 	if mesh then
+		-- AI helmet: front faces -Z like the head. Scale it to the head, paint shell + mask.
 		paint(mesh, primary)
 		local mask = mesh:FindFirstChild("facemask", true)
 		if mask and mask:IsA("BasePart") then
 			mask.Color = MASK
+			mask.Material = Enum.Material.Metal
 		end
-		local parts = mesh:IsA("BasePart") and { mesh } or mesh:GetDescendants()
+		local shell = mesh:FindFirstChild("shell", true)
+		if shell and shell:IsA("BasePart") then
+			shell.Reflectance = 0.06
+		end
+		local scale = head.Size.X * 1.42 / 1.94
 		local pivot = mesh:GetPivot()
-		for _, p in parts do
+		for _, p in mesh:GetDescendants() do
 			if p:IsA("BasePart") then
 				local rel = pivot:ToObjectSpace(p.CFrame)
-				weldTo(p, head, CFrame.new(0, 0.12, 0.05) * CFrame.Angles(0, math.pi, 0) * rel)
+				p.Size = p.Size * scale
+				weldTo(p, head, CFrame.new(0, head.Size.Y * 0.12, head.Size.Z * 0.04) * (rel - rel.Position) + rel.Position * scale)
 			end
 		end
 		return
@@ -153,17 +160,13 @@ local function addPads(model, primary, secondary)
 	end
 	local mesh = artMesh("Pads")
 	if mesh then
+		-- AI pads + jersey shell: stretched over the upper torso in the team color
 		paint(mesh, primary)
-		local parts = mesh:IsA("BasePart") and { mesh } or mesh:GetDescendants()
-		local pivot = mesh:GetPivot()
-		local w = torso.Size.X / 2
-		for _, p in parts do
-			if p:IsA("BasePart") then
-				p.Size = p.Size * Vector3.new(w * 1.1, 1, 1)
-				weldTo(p, torso, CFrame.new(0, torso.Size.Y * 0.38, 0) * pivot:ToObjectSpace(p.CFrame))
-			end
-		end
-		return
+		mesh.Material = Enum.Material.Fabric
+		mesh.Size = Vector3.new(torso.Size.X * 1.32, torso.Size.Y * 1.25, torso.Size.Z * 1.45)
+		weldTo(mesh, torso, CFrame.new(0, torso.Size.Y * 0.12, 0))
+		mesh.Name = "Pads"
+		return mesh
 	end
 	local w = torso.Size.X
 	for _, sx in { -1, 1 } do
@@ -180,7 +183,8 @@ local function addPads(model, primary, secondary)
 end
 
 local function addNumbers(model, number, lastName, primary, secondary)
-	local torso = model:FindFirstChild("UpperTorso")
+	-- on the pads shell when present (it covers the torso), otherwise on the torso
+	local torso = model:FindFirstChild("Pads") or model:FindFirstChild("UpperTorso")
 	if not torso then
 		return
 	end
