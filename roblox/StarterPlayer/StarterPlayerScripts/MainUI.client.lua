@@ -7,6 +7,7 @@ local TweenService = game:GetService("TweenService")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local PackConfig = require(ReplicatedStorage.Shared.PackConfig)
+local LineupConfig = require(ReplicatedStorage.Shared.LineupConfig)
 local CardData = require(ReplicatedStorage.Client.CardData)
 local CardRenderer = require(ReplicatedStorage.Client.CardRenderer)
 
@@ -22,7 +23,7 @@ local FONT_HEAVY = Font.fromEnum(Enum.Font.GothamBlack)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_MED = Font.fromEnum(Enum.Font.GothamMedium)
 
-local state = { coins = 0, cards = {}, shop = nil }
+local state = { coins = 0, cards = {}, lineup = {}, shop = nil }
 
 -- helpers ---------------------------------------------------------------------------
 
@@ -177,9 +178,10 @@ local shopPanel, shopBody = makePanel("Shop", "PACK SHOP")
 local collectionPanel, collectionBody = makePanel("Collection", "COLLECTION")
 local oddsPanel, oddsBody = makePanel("Odds", "PACK ODDS")
 oddsPanel.ZIndex = 20
+local lineupPanel, lineupBody = makePanel("Lineup", "LINEUP")
 
 local function showOnly(panel)
-	for _, p in { shopPanel, collectionPanel, oddsPanel } do
+	for _, p in { shopPanel, collectionPanel, oddsPanel, lineupPanel } do
 		p.Visible = p == panel
 	end
 end
@@ -515,6 +517,15 @@ local function openCard(entry)
 	face.ZIndex = 41
 	face.Parent = sellPopup
 	local value = GameConfig.QuickSell[d.card.tier] or 0
+	local starting
+	for slotId, uid in state.lineup do
+		if uid == entry.uid then
+			starting = slotId
+		end
+	end
+	if starting then
+		text({ Text = "STARTING AT " .. starting .. " - selling removes him from your lineup", TextColor3 = Color3.fromRGB(255, 196, 46), Size = UDim2.fromOffset(280, 14), Position = UDim2.fromOffset(10, 2), ZIndex = 42 }).Parent = sellPopup
+	end
 	local sell = button({ Text = "QUICK SELL: " .. commas(value) .. " COINS", BackgroundColor3 = Color3.fromRGB(255, 196, 46), Size = UDim2.fromOffset(240, 36), Position = UDim2.fromOffset(30, 384), ZIndex = 41 })
 	local armed = false
 	sell.Activated:Connect(function()
@@ -591,6 +602,253 @@ renderCollection = function()
 	end
 end
 
+-- lineup ---------------------------------------------------------------------------------
+
+local lineupSide = "Offense"
+local renderLineup
+
+local function cardByUid(uid)
+	for _, entry in state.cards do
+		if entry.uid == uid then
+			return entry
+		end
+	end
+	return nil
+end
+
+local function lineupSlotOf(uid)
+	for slotId, u in state.lineup do
+		if u == uid then
+			return slotId
+		end
+	end
+	return nil
+end
+
+local picker = new("Frame", {
+	Visible = false,
+	BackgroundColor3 = PANEL,
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0.5, 0, 0.5, 28),
+	Size = UDim2.new(1, -60, 1, -130),
+	ZIndex = 40,
+}, {
+	corner(14),
+	new("UISizeConstraint", { MaxSize = Vector2.new(1000, 640) }),
+	new("UIStroke", { Color = ACCENT, Thickness = 2 }),
+})
+picker.Parent = gui
+local pickerTitle = text({ FontFace = FONT_HEAVY, Size = UDim2.new(1, -260, 0, 28), Position = UDim2.fromOffset(18, 14), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 41 })
+pickerTitle.Parent = picker
+button({ Text = "X", Size = UDim2.fromOffset(40, 36), Position = UDim2.new(1, -54, 0, 10), BackgroundColor3 = Color3.fromRGB(60, 66, 84), TextColor3 = WHITE, ZIndex = 41 }, function()
+	picker.Visible = false
+end).Parent = picker
+local pickerRemove = button({ Text = "EMPTY SLOT", Size = UDim2.fromOffset(150, 36), Position = UDim2.new(1, -214, 0, 10), BackgroundColor3 = Color3.fromRGB(255, 90, 90), TextColor3 = WHITE, ZIndex = 41 })
+pickerRemove.Parent = picker
+local pickerBody = new("ScrollingFrame", {
+	BackgroundTransparency = 1,
+	Size = UDim2.new(1, -24, 1, -64),
+	Position = UDim2.fromOffset(12, 56),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	CanvasSize = UDim2.new(),
+	ScrollBarThickness = 6,
+	ZIndex = 41,
+})
+pickerBody.Parent = picker
+
+local function setSlot(slotId, uid)
+	local res = Remotes.SetLineupSlot:InvokeServer(slotId, uid)
+	if not res.ok then
+		toast(res.err or "Couldn't change lineup")
+	end
+	picker.Visible = false
+end
+
+local pickerRemoveConn
+local function openPicker(slot)
+	pickerBody:ClearAllChildren()
+	pickerTitle.Text = "PICK YOUR " .. slot.label .. (slot.id ~= slot.label and (" (" .. slot.id .. ")") or "")
+	if pickerRemoveConn then
+		pickerRemoveConn:Disconnect()
+	end
+	pickerRemove.Visible = state.lineup[slot.id] ~= nil
+	pickerRemoveConn = pickerRemove.Activated:Connect(function()
+		setSlot(slot.id, nil)
+	end)
+	new("UIGridLayout", { CellSize = UDim2.fromOffset(130, 195), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }).Parent = pickerBody
+
+	local options = {}
+	for _, entry in state.cards do
+		local d = CardData.Describe(entry.id)
+		if d and d.card.pos == slot.pos then
+			table.insert(options, { entry = entry, d = d })
+		end
+	end
+	table.sort(options, function(a, b)
+		return a.d.card.ovr > b.d.card.ovr or (a.d.card.ovr == b.d.card.ovr and a.entry.uid < b.entry.uid)
+	end)
+	if #options == 0 then
+		text({ Text = "You don't have any " .. slot.pos .. " cards yet. Open packs to get some!", TextColor3 = MUTED, Size = UDim2.fromOffset(600, 30), ZIndex = 42 }).Parent = pickerBody
+	end
+	for i, opt in options do
+		local face = CardRenderer.Create(opt.d, { stroke = 2, figure = false })
+		face.LayoutOrder = i
+		face.ZIndex = 42
+		local inSlot = lineupSlotOf(opt.entry.uid)
+		if inSlot then
+			text({
+				Text = inSlot == slot.id and "IN THIS SLOT" or ("STARTING: " .. inSlot),
+				FontFace = FONT_HEAVY,
+				BackgroundTransparency = 0,
+				BackgroundColor3 = inSlot == slot.id and ACCENT or Color3.fromRGB(255, 196, 46),
+				TextColor3 = BG,
+				Size = UDim2.fromScale(1, 0.1),
+				Position = UDim2.fromScale(0, 0.45),
+				ZIndex = 60,
+			}).Parent = face
+		end
+		local hit = new("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1), ZIndex = 61 })
+		hit.Activated:Connect(function()
+			if inSlot ~= slot.id then
+				setSlot(slot.id, opt.entry.uid)
+			end
+		end)
+		hit.Parent = face
+		face.Parent = pickerBody
+	end
+	picker.Visible = true
+end
+
+renderLineup = function()
+	CardData.Ensure()
+	lineupBody:ClearAllChildren()
+	new("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }).Parent = lineupBody
+
+	local ratings = LineupConfig.TeamRatings(state.lineup, function(uid)
+		local entry = cardByUid(uid)
+		return entry and CardData.Get(entry.id)
+	end)
+
+	-- header: ratings + side tabs + auto-fill
+	local header = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 44), LayoutOrder = 1, ZIndex = 12 }, {
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }),
+	})
+	header.Parent = lineupBody
+	local function stat(name, value, order, color)
+		new("Frame", { BackgroundColor3 = Color3.fromRGB(14, 16, 24), Size = UDim2.fromOffset(92, 44), LayoutOrder = order, ZIndex = 12 }, {
+			corner(8),
+			new("UIStroke", { Color = color, Thickness = 1 }),
+			text({ Text = tostring(value), FontFace = FONT_HEAVY, TextColor3 = color, Size = UDim2.new(0.5, 0, 0.8, 0), Position = UDim2.fromScale(0.05, 0.1), ZIndex = 13 }),
+			text({ Text = name, FontFace = FONT_BOLD, TextColor3 = MUTED, Size = UDim2.new(0.4, 0, 0.45, 0), Position = UDim2.fromScale(0.55, 0.28), ZIndex = 13 }),
+		}).Parent = header
+	end
+	stat("TEAM", ratings.ovr, 1, ACCENT)
+	stat("OFF", ratings.off, 2, Color3.fromRGB(64, 160, 255))
+	stat("DEF", ratings.def, 3, Color3.fromRGB(255, 120, 90))
+	text({ Text = ("%d/%d filled"):format(ratings.filled, ratings.total), FontFace = FONT_MED, TextColor3 = MUTED, Size = UDim2.fromOffset(110, 20), LayoutOrder = 4, ZIndex = 12 }).Parent = header
+	for i, side in { "Offense", "Defense" } do
+		button({
+			Text = string.upper(side),
+			Size = UDim2.fromOffset(120, 38),
+			LayoutOrder = 4 + i,
+			ZIndex = 12,
+			BackgroundColor3 = side == lineupSide and ACCENT or Color3.fromRGB(44, 50, 68),
+			TextColor3 = side == lineupSide and BG or WHITE,
+		}, function()
+			lineupSide = side
+			renderLineup()
+		end).Parent = header
+	end
+	button({ Text = "AUTO-FILL BEST", Size = UDim2.fromOffset(170, 38), LayoutOrder = 8, ZIndex = 12, BackgroundColor3 = Color3.fromRGB(255, 196, 46) }, function()
+		local res = Remotes.AutoFillLineup:InvokeServer()
+		if res.ok then
+			toast("Lineup filled with your best cards")
+		end
+	end).Parent = header
+
+	-- field
+	local field = new("Frame", {
+		BackgroundColor3 = WHITE,
+		Size = UDim2.new(1, 0, 0, 470),
+		LayoutOrder = 2,
+		ZIndex = 12,
+		ClipsDescendants = true,
+	}, {
+		corner(12),
+		new("UIGradient", {
+			Rotation = 90,
+			Color = ColorSequence.new(Color3.fromRGB(34, 120, 64), Color3.fromRGB(18, 78, 40)),
+		}),
+	})
+	field.Parent = lineupBody
+	for i = 1, 9 do
+		new("Frame", {
+			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 0.82,
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 2),
+			Position = UDim2.fromScale(0, i / 10),
+			ZIndex = 13,
+		}).Parent = field
+	end
+	new("Frame", { -- line of scrimmage
+		BackgroundColor3 = Color3.fromRGB(80, 170, 255),
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 0, 3),
+		Position = UDim2.fromScale(0, lineupSide == "Offense" and 0.04 or 0.04),
+		ZIndex = 13,
+	}).Parent = field
+	text({
+		Text = lineupSide == "Offense" and "OFFENSE  -  tap a spot to change the player" or "DEFENSE  -  tap a spot to change the player",
+		FontFace = FONT_BOLD,
+		TextColor3 = Color3.fromRGB(220, 255, 230),
+		TextTransparency = 0.2,
+		Size = UDim2.new(1, -20, 0, 18),
+		Position = UDim2.new(0, 10, 1, -24),
+		ZIndex = 13,
+	}).Parent = field
+
+	for _, slot in LineupConfig.Slots do
+		if slot.side == lineupSide then
+			local holder = new("Frame", {
+				BackgroundTransparency = 1,
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(slot.x, slot.y),
+				Size = UDim2.fromScale(0.15, 0.44),
+				ZIndex = 14,
+			}, {
+				new("UIAspectRatioConstraint", { AspectRatio = 2 / 3 }),
+			})
+			local entry = cardByUid(state.lineup[slot.id])
+			local d = entry and CardData.Describe(entry.id)
+			if d then
+				local face = CardRenderer.Create(d, { stroke = 2 })
+				face.Size = UDim2.fromScale(1, 1)
+				face.ZIndex = 15
+				face.Parent = holder
+			else
+				new("Frame", {
+					BackgroundColor3 = Color3.new(0, 0, 0),
+					BackgroundTransparency = 0.55,
+					Size = UDim2.fromScale(1, 1),
+					ZIndex = 15,
+				}, {
+					corner(10),
+					new("UIStroke", { Color = WHITE, Transparency = 0.3, Thickness = 2 }),
+					text({ Text = "+", FontFace = FONT_HEAVY, Size = UDim2.fromScale(0.5, 0.3), Position = UDim2.fromScale(0.25, 0.25), ZIndex = 16 }),
+					text({ Text = slot.label, FontFace = FONT_HEAVY, TextColor3 = MUTED, Size = UDim2.fromScale(0.6, 0.14), Position = UDim2.fromScale(0.2, 0.62), ZIndex = 16 }),
+				}).Parent = holder
+			end
+			local hit = new("TextButton", { Name = "Slot_" .. slot.id, BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1), ZIndex = 30 })
+			hit.Activated:Connect(function()
+				openPicker(slot)
+			end)
+			hit.Parent = holder
+			holder.Parent = field
+		end
+	end
+end
+
 -- top bar buttons -----------------------------------------------------------------------
 
 button({ Text = "PACKS", Size = UDim2.fromOffset(110, 38), LayoutOrder = 3 }, function()
@@ -612,6 +870,15 @@ button({ Text = "COLLECTION", Size = UDim2.fromOffset(150, 38), LayoutOrder = 4,
 	renderCollection()
 end).Parent = topBar
 
+button({ Text = "LINEUP", Size = UDim2.fromOffset(120, 38), LayoutOrder = 5, BackgroundColor3 = Color3.fromRGB(255, 196, 46) }, function()
+	if lineupPanel.Visible then
+		lineupPanel.Visible = false
+		return
+	end
+	showOnly(lineupPanel)
+	renderLineup()
+end).Parent = topBar
+
 -- inventory sync -------------------------------------------------------------------------
 
 local function applyInventory(inv)
@@ -620,9 +887,13 @@ local function applyInventory(inv)
 	end
 	state.coins = inv.coins
 	state.cards = inv.cards
+	state.lineup = inv.lineup or {}
 	coinsLabel.Text = commas(inv.coins) .. " Coins"
 	if collectionPanel.Visible and not overlay.Visible then
 		renderCollection()
+	end
+	if lineupPanel.Visible then
+		renderLineup()
 	end
 end
 

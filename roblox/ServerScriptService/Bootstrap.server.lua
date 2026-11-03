@@ -26,8 +26,11 @@ remote("RemoteFunction", "OpenPack")
 remote("RemoteFunction", "PromptPack")
 remote("RemoteFunction", "GetShop")
 remote("RemoteEvent", "PackOpened")
+remote("RemoteFunction", "SetLineupSlot")
+remote("RemoteFunction", "AutoFillLineup")
 
 local PackService = require(ServerScriptService.Modules.PackService)
+local LineupService = require(ServerScriptService.Modules.LineupService)
 
 local function snapshotFor(player)
 	local profile = PlayerData.Get(player)
@@ -102,10 +105,12 @@ QuickSell.OnServerInvoke = function(player, uid)
 		return { ok = false, err = "Card not found." }
 	end
 	PlayerData.AddCoins(player, value)
+	task.spawn(PlayerData.SaveNow, player)
 	return { ok = true, coins = value }
 end
 
 -- Start ---------------------------------------------------------------------------
 CardDatabase.Start()
 PackService.Start(remotes)
+LineupService.Start(remotes)
 PlayerData.Start()

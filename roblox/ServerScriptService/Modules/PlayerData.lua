@@ -72,10 +72,13 @@ local function trimReceipts(receipts)
 	end
 end
 
+local savesInFlight = 0 -- BindToClose waits for these so a leaving player's save isn't cut off
+
 -- Write the save. `release` clears our lock (player left / server closing).
 local function save(userId, data, release)
 	local lostLock = false
 	trimReceipts(data.receipts)
+	savesInFlight += 1
 	local ok, err = pcall(store.UpdateAsync, store, keyFor(userId), function(old)
 		if old and old.lock and old.lock.job ~= jobId then
 			lostLock = true
@@ -84,6 +87,7 @@ local function save(userId, data, release)
 		data.lock = (not release) and { job = jobId, t = os.time() } or nil
 		return data
 	end)
+	savesInFlight -= 1
 	if not ok then
 		warn("[PlayerData] save failed for", userId, err)
 	elseif lostLock then
@@ -168,16 +172,14 @@ function PlayerData.Start()
 	end)
 
 	game:BindToClose(function()
-		local pending = 0
 		for player, profile in profiles do
-			pending += 1
-			task.spawn(function()
-				save(player.UserId, profile.data, true)
-				pending -= 1
-			end)
+			profiles[player] = nil
+			task.spawn(save, player.UserId, profile.data, true)
 		end
+		-- also covers saves started by PlayerRemoving just before shutdown
+		task.wait()
 		local start = os.clock()
-		while pending > 0 and os.clock() - start < 25 do
+		while savesInFlight > 0 and os.clock() - start < 25 do
 			task.wait()
 		end
 	end)

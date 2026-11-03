@@ -6,6 +6,8 @@ local BASE = "http://127.0.0.1:8766/"
 local files = {
 	"ReplicatedStorage/Shared/GameConfig.lua",
 	"ReplicatedStorage/Shared/PackConfig.lua",
+	"ReplicatedStorage/Shared/LineupConfig.lua",
+	"ServerScriptService/Modules/LineupService.lua",
 	"ReplicatedStorage/Client/CardData.lua",
 	"ReplicatedStorage/Client/CardRenderer.lua",
 	"ServerScriptService/Modules/CardDatabase.lua",
