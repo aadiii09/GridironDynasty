@@ -13,7 +13,7 @@ Coins are never sold for Robux. That keeps Coin packs from counting as paid rand
 
 | Tier | OVR | Quick-sell (Coins) |
 |---|---|---|
-| Common | 60-69 | 25 |
+| Common | 58-69 | 25 |
 | Rare | 70-79 | 75 |
 | Epic | 80-86 | 250 |
 | Elite | 87-91 | 1,000 |
@@ -24,7 +24,7 @@ Coins are never sold for Robux. That keeps Coin packs from counting as paid rand
 Every card's rating is locked when the card is released. Real performance shows up as **new** cards, not as changes to old ones:
 
 - **Base**: every rostered player, rated from 2026 season stats at launch.
-- **Week Standout**: released each Tuesday for the week's top performers (+3 to +6 OVR over Base).
+- **Week Standout**: released each Tuesday for the week's top 8 offensive and top 6 defensive performers (+2 to +5 OVR over Base, up to 99).
 - **Breakout / All-Pro** (later): mid-season and end-of-season programs.
 
 ## Packs
@@ -37,4 +37,16 @@ Every card's rating is locked when the card is released. Real performance shows 
 | Elite | 149 R$ | 8 | 1 Epic+ | 45% | 37% | 14% | 3.5% | 0.5% |
 | Dynasty | 399 R$ | 10 | 1 Elite+ | 30% | 40% | 22% | 6.5% | 1.5% |
 
-Odds shown are per card slot, and each row sums to 100%. The guaranteed slot has its own odds table (only tiers at or above the guarantee). The pack screen shows both tables plus every card's exact % (tier % divided by the number of cards in that tier), as Roblox requires before any Robux purchase.
+Odds shown are per card slot, and each row sums to 100%. The last card of Pro/Elite/Dynasty packs uses the guaranteed-slot table instead:
+
+| Pack | Rare | Epic | Elite | Icon |
+|---|---|---|---|---|
+| Pro (slot 5) | 85% | 12% | 2.5% | 0.5% |
+| Elite (slot 8) | - | 80% | 17% | 3% |
+| Dynasty (slot 10) | - | - | 85% | 15% |
+
+The pack screen's VIEW ODDS shows both tables plus every card's exact % (tier % divided by the number of cards in that tier), as Roblox requires before any Robux purchase. Source of truth for these numbers: `roblox/ReplicatedStorage/Shared/PackConfig.lua`.
+
+## Robux packs setup
+
+Each Robux pack needs a Developer Product (Creator Hub > your experience > Monetization > Developer Products) with the matching price. Put its ID in `productId` in PackConfig.lua. Until then the pack shows "Coming soon".

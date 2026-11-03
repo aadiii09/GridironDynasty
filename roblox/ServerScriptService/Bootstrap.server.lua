@@ -21,6 +21,13 @@ end
 
 local GetInventory = remote("RemoteFunction", "GetInventory")
 local InventoryChanged = remote("RemoteEvent", "InventoryChanged")
+local QuickSell = remote("RemoteFunction", "QuickSell")
+remote("RemoteFunction", "OpenPack")
+remote("RemoteFunction", "PromptPack")
+remote("RemoteFunction", "GetShop")
+remote("RemoteEvent", "PackOpened")
+
+local PackService = require(ServerScriptService.Modules.PackService)
 
 local function snapshotFor(player)
 	local profile = PlayerData.Get(player)
@@ -79,6 +86,26 @@ PlayerData.Changed.Event:Connect(function(player, profile)
 	InventoryChanged:FireClient(player, snapshotFor(player))
 end)
 
+-- Quick-sell a card for Coins ---------------------------------------------------------
+QuickSell.OnServerInvoke = function(player, uid)
+	local profile = PlayerData.Get(player)
+	if type(uid) ~= "string" or not profile then
+		return { ok = false }
+	end
+	local entry = profile.data.cards[uid]
+	local card = entry and CardDatabase.Get(entry.id)
+	if not card then
+		return { ok = false, err = "Card not found." }
+	end
+	local value = GameConfig.QuickSell[card.tier] or 0
+	if not PlayerData.RemoveCard(player, uid) then
+		return { ok = false, err = "Card not found." }
+	end
+	PlayerData.AddCoins(player, value)
+	return { ok = true, coins = value }
+end
+
 -- Start ---------------------------------------------------------------------------
 CardDatabase.Start()
+PackService.Start(remotes)
 PlayerData.Start()
