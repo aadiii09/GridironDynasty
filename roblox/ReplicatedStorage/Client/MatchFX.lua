@@ -10,6 +10,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Sounds = require(ReplicatedStorage.Client.Sounds)
+local Assets = require(ReplicatedStorage.Shared.Assets)
 
 local MatchFX = {}
 
@@ -230,10 +231,95 @@ local function updateFlight()
 	MatchFX.BallPosition = p
 end
 
+-- Ball locator ------------------------------------------------------------------------------
+-- CPU ball: a gold arrow over the ball + a gold outline on whoever has it.
+-- Any throw: a pulsing gold circle where the ball will come down (get there for the pick).
+local GOLD = Color3.fromRGB(255, 214, 40)
+local marker, carrierGlow, landing
+local function makeLocator()
+	marker = Instance.new("BillboardGui")
+	marker.Name = "BallMarker"
+	marker.AlwaysOnTop = true
+	marker.Size = UDim2.fromOffset(46, 58)
+	marker.StudsOffsetWorldSpace = Vector3.new(0, 4.2, 0)
+	marker.LightInfluence = 0
+	local ball = Instance.new("ImageLabel")
+	ball.BackgroundTransparency = 1
+	ball.Size = UDim2.fromOffset(40, 40)
+	ball.Position = UDim2.fromOffset(3, 0)
+	ball.Image = Assets.icon_football
+	ball.ImageColor3 = GOLD
+	ball.Parent = marker
+	local tip = Instance.new("Frame")
+	tip.BackgroundColor3 = GOLD
+	tip.BorderSizePixel = 0
+	tip.Size = UDim2.fromOffset(14, 14)
+	tip.AnchorPoint = Vector2.new(0.5, 0.5)
+	tip.Position = UDim2.new(0.5, 0, 0, 46)
+	tip.Rotation = 45
+	tip.Parent = marker
+	marker.Parent = player:WaitForChild("PlayerGui")
+	carrierGlow = Instance.new("Highlight")
+	carrierGlow.Name = "BallCarrierGlow"
+	carrierGlow.FillColor = GOLD
+	carrierGlow.FillTransparency = 0.75
+	carrierGlow.OutlineColor = GOLD
+	carrierGlow.OutlineTransparency = 0
+	carrierGlow.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	carrierGlow.Parent = player.PlayerGui
+	landing = Instance.new("Part")
+	landing.Name = "LandingSpot"
+	landing.Shape = Enum.PartType.Cylinder
+	landing.Anchored = true
+	landing.CanCollide = false
+	landing.CanQuery = false
+	landing.CanTouch = false
+	landing.CastShadow = false
+	landing.Material = Enum.Material.Neon
+	landing.Color = GOLD
+	landing.Transparency = 0.35
+end
+
+local function updateLocator()
+	if not marker then
+		makeLocator()
+	end
+	local s = state
+	local live = s and s.phase == "live"
+	local cpuBall = s and s.possession == "cpu"
+	local air = live and s.playState == "air" and s.air
+	-- arrow: over the flying ball, or over the ball in someone's hands
+	local target
+	if live and cpuBall then
+		target = air and flightBall and flightBall.Parent and flightBall or (not air and s.ball)
+	end
+	marker.Adornee = target or nil
+	marker.Enabled = target ~= nil
+	-- outline whoever is holding the ball
+	local holder
+	if live and cpuBall and not air and s.ball then
+		local weld = s.ball:FindFirstChildOfClass("WeldConstraint")
+		local hand = weld and weld.Part0
+		holder = hand and hand:FindFirstAncestorOfClass("Model")
+	end
+	carrierGlow.Adornee = holder
+	carrierGlow.Enabled = holder ~= nil
+	-- landing circle
+	if air and s.losWorld then
+		local pulse = 1 + 0.12 * math.sin(os.clock() * 10)
+		landing.Size = Vector3.new(0.2, 7 * pulse, 7 * pulse)
+		landing.CFrame = CFrame.new(air.to.X, s.losWorld.Y + 0.12, air.to.Z) * CFrame.Angles(0, 0, math.rad(90))
+		landing.Parent = workspace
+	else
+		landing.Parent = nil
+	end
+end
+
 -- Per-frame: after animations, before physics ---------------------------------------------
 local connection
 local function step(dt)
 	updateFlight()
+	updateLocator()
 	if not state then
 		return
 	end
@@ -330,6 +416,11 @@ function MatchFX.Stop()
 	state, prev = nil, nil
 	if flightBall then
 		flightBall.Parent = nil
+	end
+	if marker then
+		marker.Enabled = false
+		carrierGlow.Enabled = false
+		landing.Parent = nil
 	end
 	MatchFX.BallPosition = nil
 	table.clear(rigs)

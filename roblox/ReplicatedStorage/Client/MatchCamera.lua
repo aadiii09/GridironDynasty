@@ -36,7 +36,15 @@ local function targetCFrame(dt)
 	local ball = s.ball
 	local playState = s.phase == "live" and s.playState or nil
 
-	-- ball in the air: ride behind it (the smooth locally-drawn ball from MatchFX)
+	-- CPU throw while you're on defense: stay high behind your defense, framing you and the
+	-- landing spot (gold circle), so you can get there for the pick
+	if playState == "air" and not userBall and s.air and root then
+		local p = root.Position
+		local mid = p:Lerp(s.air.to, 0.5)
+		return CFrame.lookAt(mid + down * 30 + UP * 28, mid), 5
+	end
+
+	-- your throw: ride behind the ball (the smooth locally-drawn ball from MatchFX)
 	local flightPos = MatchCamera.BallPosition and MatchCamera.BallPosition()
 	if playState == "air" and (flightPos or (ball and ball.Parent)) then
 		local p = flightPos or ball.Position
@@ -70,8 +78,8 @@ local function targetCFrame(dt)
 	if (playState == "dropback" or playState == "carry") and root then
 		local p = root.Position
 		local look = ball and ball.Parent and ball.Position or los
-		local mid = p:Lerp(look, 0.5)
-		return CFrame.lookAt(p + down * 24 + UP * 20, mid), 5
+		local mid = p:Lerp(look, 0.4)
+		return CFrame.lookAt(mid + down * 30 + UP * 28, mid), 5
 	end
 	local focus = los - down * 2
 	return CFrame.lookAt(los + down * 44 + UP * 30, focus), 4

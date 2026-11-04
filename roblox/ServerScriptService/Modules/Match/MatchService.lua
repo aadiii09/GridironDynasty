@@ -39,6 +39,7 @@ local Y = MatchConfig.Yard
 local L = MatchConfig.FieldLength()
 local HALF_W = MatchConfig.HalfWidth()
 local TACKLE_RANGE = 3.2
+local AVATAR_TACKLE_RANGE = 4.6 -- you get a bigger tackle radius than the AI
 local GREEN = Color3.fromRGB(46, 255, 140)
 local RED = Color3.fromRGB(255, 90, 90)
 local GOLD = Color3.fromRGB(255, 214, 40)
@@ -205,6 +206,14 @@ local function tally(m, key, n)
 	m.tally[key] = (m.tally[key] or 0) + (n or 1)
 end
 
+-- Floating text over a player (shown on the client): makes the rating behind a play visible
+local function callout(m, unit, text, color)
+	local model = (unit == "avatar" or (type(unit) == "table" and unit.isAvatar)) and m.player.Character or (type(unit) == "table" and unit.model)
+	if model then
+		remotes.MatchState:FireClient(m.player, { event = "callout", model = model, text = text, color = (color or Color3.new(1, 1, 1)):ToHex() })
+	end
+end
+
 local function nameOf(unit)
 	if unit and unit.isAvatar then
 		return "YOU"
@@ -221,7 +230,10 @@ local function sendState(m, message, color)
 		for i, slotId in MatchConfig.Targets do
 			local route = m.call and m.call.routes[slotId]
 			local unit = m.units.Offense[slotId]
-			table.insert(targets, { key = i, slot = slotId, pos = unit.card.pos, name = nameOf(unit), available = type(route) == "table" })
+			table.insert(targets, {
+				key = i, slot = slotId, pos = unit.card.pos, name = nameOf(unit), available = type(route) == "table",
+				ovr = unit.card.ovr, spd = unit.attrs.SPD, cth = unit.attrs.CTH, model = unit.model,
+			})
 		end
 	end
 	local controlled = not userBall and m.units.Defense[m.controlSlot]
@@ -306,7 +318,7 @@ local function lineUp(m)
 		else
 			unit:Hide(false)
 			unit:Place(cf)
-			unit:SetTag(("%s %s"):format(unit.card.pos, nameOf(unit)))
+			unit:SetTag(("%d %s %s"):format(unit.card.ovr, unit.card.pos, nameOf(unit)))
 		end
 	end
 	m.avatarUnit = nil
@@ -321,7 +333,7 @@ local function lineUp(m)
 		else
 			unit:Hide(false)
 			unit:Place(cf)
-			unit:SetTag(("%s %s"):format(unit.card.pos, nameOf(unit)))
+			unit:SetTag(("%d %s %s"):format(unit.card.ovr, unit.card.pos, nameOf(unit)))
 		end
 	end
 	m.field:SetMarkers(m.los, m.firstDown)
@@ -349,7 +361,7 @@ local function tagTargets(m)
 		local unit = m.units.Offense[slotId]
 		local route = m.call and m.call.routes[slotId]
 		if type(route) == "table" and not m.call.run then
-			unit:SetTag(("[%d] %s %s"):format(i, unit.card.pos, nameOf(unit)), GOLD)
+			unit:SetTag(("[%d] %d %s %s"):format(i, unit.card.ovr, unit.card.pos, nameOf(unit)), GOLD)
 			-- glowing target ring at his feet
 			local ring = Instance.new("Part")
 			ring.Name = "TargetRing"
@@ -648,6 +660,28 @@ local function switchControl(m, slotId)
 	m.avatarSpeed, m.avatarRamp = target.speed, target.rampTime
 end
 
+-- On defense, jump you to the defender closest to where the ball is going (throw, catch,
+-- handoff), unless you're already near it. You can still switch yourself with Q.
+local function autoSwitch(m, pos)
+	if not MatchConfig.AutoSwitch or m.possession ~= "cpu" or not m.avatarUnit or not pos then
+		return
+	end
+	local mine = hdist(m.avatarUnit:Position(), pos)
+	local best, bestD
+	for slotId, unit in m.units.Defense do
+		if not unit.hidden then
+			local d = hdist(unit:Position(), pos)
+			if not bestD or d < bestD then
+				best, bestD = slotId, d
+			end
+		end
+	end
+	if best and bestD + 4 < mine then
+		switchControl(m, best)
+		m.lastSwitch = os.clock()
+	end
+end
+
 -- Play engine --------------------------------------------------------------------------------
 
 local endPlay, throwBall -- forward
@@ -695,6 +729,9 @@ local function attemptTackle(m, def, now)
 	if sack then
 		p = math.clamp(0.72 + (d.TAK - move) * 0.01, 0.45, 0.96)
 	end
+	if def.isAvatar then
+		p = math.min(0.97, p + 0.1) -- a little help when you make the hit
+	end
 	def.tackleReadyAt = now + (def.isAvatar and 0.8 or 1.4)
 	if chance(p) then
 		local pos = carrierPos(m)
@@ -710,7 +747,13 @@ local function attemptTackle(m, def, now)
 		setPose(def, "dive", 1.2)
 		m.play.bigHit = d.POW >= 80 and chance((d.POW - 70) / 60)
 		local pFumble = math.clamp(0.008 + (d.POW - c.CAR) * 0.0014 + (m.play.bigHit and 0.015 or 0), 0.003, 0.06)
+		if sack then
+			callout(m, def, "SACK!", GOLD)
+		elseif m.play.bigHit then
+			callout(m, def, "BIG HIT!", GOLD)
+		end
 		if chance(pFumble) then
+			callout(m, def, "FORCED FUMBLE!", GOLD)
 			endPlay(m, "fumble", fy, def)
 		else
 			endPlay(m, sack and "sack" or "tackle", fy, def)
@@ -719,6 +762,7 @@ local function attemptTackle(m, def, now)
 		-- beaten: the better the move beat him, the longer he's out of the play
 		def.stunUntil = now + math.clamp(0.55 + (move - tak) * 0.01, 0.4, 1)
 		log(("tackle broken: %s %d vs TAK %d (%.0f%% to tackle)"):format(moveName, move, tak, p * 100))
+		callout(m, m.play.carrier, moveName .. "!", m.possession == "user" and GREEN or RED)
 		if def.isAvatar then
 			sendState(m, moveName == "ESCAPED" and "HE ESCAPED!" or (moveName .. " - MISSED TACKLE!"), RED)
 		elseif m.possession == "user" then
@@ -799,7 +843,11 @@ local function routeBreak(m, unit, route, coverage, now)
 		if oSlot == unit.slot then
 			local d = defenderAt(m, dSlot)
 			if d and not d.isAvatar then
-				d.reactAt = math.max(d.reactAt or 0, now + math.clamp(0.2 + (rr - d.attrs.MCV) * 0.012, 0.05, 0.6))
+				local lag = math.clamp(0.2 + (rr - d.attrs.MCV) * 0.012, 0.05, 0.6)
+				d.reactAt = math.max(d.reactAt or 0, now + lag)
+				if lag >= 0.36 then
+					callout(m, unit, "SHOOK HIM!", GREEN)
+				end
 			end
 		end
 	end
@@ -820,9 +868,11 @@ local function pressAtLine(m, now)
 			if chance(math.clamp(0.45 + edge * 0.025, 0.08, 0.92)) then
 				wr.engagedUntil = now + math.clamp(0.45 + edge * 0.01, 0.25, 0.75)
 				wr.engageFactor = 0.7
+				callout(m, wr, "JAMMED", RED)
 				log(("press: %s jammed %s (PRS %d vs RLS %d)"):format(cb, wrSlot, d.attrs.PRS, wr.attrs.RLS))
 			else
 				d.stunUntil = now + 0.35
+				callout(m, wr, "WON THE RELEASE", GREEN)
 				log(("press: %s beat the jam by %s (RLS %d vs PRS %d)"):format(wrSlot, cb, wr.attrs.RLS, d.attrs.PRS))
 			end
 		end
@@ -900,6 +950,14 @@ local function think(m, now)
 							local move = usePower and v.PMV or v.FMV
 							local blk = b.PBK * 0.5 + (usePower and b.PBP or b.PBF) * 0.5
 							keep = math.clamp(0.18 + (move - blk) * 0.009 + (usePower and power * 0.002 or 0), 0.04, 0.5)
+						end
+						play.called = play.called or {}
+						if play.state ~= "carry" and keep >= 0.34 and not play.called[victim] then
+							play.called[victim] = true
+							callout(m, victim, v.PMV >= v.FMV and "BULL RUSH" or "SWIM MOVE", GOLD)
+						elseif keep <= 0.08 and not play.called[unit] then
+							play.called[unit] = true
+							callout(m, unit, "PANCAKE", GOLD)
 						end
 						if victim.isAvatar then
 							keep = math.max(keep, 0.45) -- you can always fight through a block a bit
@@ -1009,17 +1067,23 @@ local function resolveCatch(m)
 		end
 	end
 	local cov = nearest and (m.defCall == "zone" and nearest.attrs.ZCV or nearest.attrs.MCV) or 50
-	if nearest and nearest.isAvatar and sep < 3 then
-		-- you got under the throw: your best chance at a pick
-		local pInt = math.clamp(0.3 + (cov - 60) * 0.004 + (nearest.attrs.CTH - 50) * 0.004 + (3 - sep) * 0.08 + (rcvDist > 4 and 0.2 or 0), 0.12, 0.75)
+	-- you (on defense) near the landing spot: a real shot at the pick, otherwise a likely breakup
+	local me = m.avatarUnit
+	local meDist = me and hdist(me:Position(), a.to) or math.huge
+	if me and meDist < 4.5 then
+		local myCov = m.defCall == "zone" and me.attrs.ZCV or me.attrs.MCV
+		local pInt = math.clamp(0.16 + (4.5 - meDist) * 0.09 + (myCov - 60) * 0.004 + (me.attrs.CTH - 50) * 0.004 + (rcvDist > 4 and 0.15 or 0), 0.12, 0.65)
+		log(("pick check: you %.1f from the ball, chance %.0f%%"):format(meDist, pInt * 100))
 		if chance(pInt) then
-			endPlay(m, "int", nil, nearest)
+			callout(m, me, "PICKED OFF!", GOLD)
+			endPlay(m, "int", nil, me)
 			return
 		end
-	elseif nearest and sep < 3.2 then
+	elseif nearest and not nearest.isAvatar and sep < 3.2 then
 		-- ~2-3% normally, ~10% into tight coverage by a good cover man, more on bad throws
 		local pInt = math.clamp(0.015 + (cov - 60) * 0.0018 + (nearest.attrs.CTH - 50) * 0.0012 + math.max(0, 2.5 - sep) * 0.04 + (rcvDist > 4 and 0.1 or 0), 0.01, 0.25)
 		if chance(pInt) then
+			callout(m, nearest, "PICKED OFF!", GOLD)
 			endPlay(m, "int", nil, nearest)
 			return
 		end
@@ -1027,7 +1091,7 @@ local function resolveCatch(m)
 	-- spectacular catchers get to throws other receivers can't
 	local reach = 3.6 + (r.SPC - 50) * 0.035
 	if rcvDist <= reach then
-		local breakup = (nearest and nearest.isAvatar and sep < 3) and 0.15 or 0
+		local breakup = (me and meDist < 4.5) and 0.3 or 0
 		local pCatch = 0.58 + r.CTH * 0.0042
 		if nearest and sep < 3 then
 			-- contested: catch in traffic vs the defender's coverage
@@ -1041,17 +1105,29 @@ local function resolveCatch(m)
 		log(("catch check: CTH %d CIT %d SPC %d, ball %.1f off, defender %.1f away (cover %d)%s, chance %.0f%%"):format(
 			r.CTH, r.CIT, r.SPC, rcvDist, sep, cov, nearest and nearest.isAvatar and " (you)" or "", pCatch * 100))
 		if chance(pCatch) then
+			if nearest and sep < 2.2 then
+				callout(m, rcv, "CATCH IN TRAFFIC", m.possession == "user" and GREEN or RED)
+			elseif rcvDist > 2.4 then
+				callout(m, rcv, "SPECTACULAR CATCH", m.possession == "user" and GREEN or RED)
+			end
 			if m.possession == "user" then
 				m.play.caught = true
 				swapInto(m, rcv.slot)
 				sendState(m, "CAUGHT! RUN!", GREEN)
 			else
 				giveTo(m, rcv)
+				autoSwitch(m, rcv:Position())
 				sendState(m, "CAUGHT BY " .. nameOf(rcv) .. " - TACKLE HIM!", RED)
 			end
 			return
 		end
-		endPlay(m, "drop", nil, nearest, rcv)
+		if breakup > 0 then
+			callout(m, me, "BROKEN UP!", GREEN)
+			endPlay(m, "drop", nil, me, rcv)
+		else
+			callout(m, rcv, "DROPPED", m.possession == "user" and RED or GREEN)
+			endPlay(m, "drop", nil, nearest, rcv)
+		end
 		return
 	end
 	endPlay(m, "incomplete")
@@ -1115,7 +1191,7 @@ local function step(m)
 	if play.state == "dropback" or play.state == "carry" then
 		for _, d in defenders(m) do
 			local blocked = now < d.engagedUntil and not d.isAvatar
-			if not blocked and now >= d.stunUntil and now >= (d.tackleReadyAt or 0) and hdist(d:Position(), pos) < TACKLE_RANGE then
+			if not blocked and now >= d.stunUntil and now >= (d.tackleReadyAt or 0) and hdist(d:Position(), pos) < (d.isAvatar and AVATAR_TACKLE_RANGE or TACKLE_RANGE) then
 				attemptTackle(m, d, now)
 				if play.state == "dead" then
 					return
@@ -1321,6 +1397,7 @@ local function snap(m)
 					sendState(m, "HANDOFF - RUN!", GREEN)
 				else
 					giveTo(m, m.units.Offense.RB)
+					autoSwitch(m, m.units.Offense.RB:Position())
 					sendState(m, "IT'S A RUN!", GOLD)
 				end
 			end
@@ -1342,6 +1419,9 @@ function throwBall(m, rcv)
 	end
 	local qb = m.units.Offense.QB.attrs
 	local ballSpeed = 40 + qb.THP * 0.4 -- THP 70 -> 68, 95 -> 78 studs/s
+	if m.possession ~= "user" then
+		ballSpeed *= 0.8 -- CPU throws hang a little longer so you can react on defense
+	end
 	-- lead the receiver along his actual route (so throws hit him after his cut), at the speed
 	-- he's really moving (still building up, jammed, or in a cut), not just his top speed
 	local runSpeed = math.clamp((rcv:Velocity().Magnitude + rcv.speed) / 2, rcv.speed * 0.5, rcv.speed)
@@ -1418,6 +1498,7 @@ function throwBall(m, rcv)
 	m.ball.CFrame = CFrame.new(play.air.from)
 	play.carrier = nil
 	play.state = "air"
+	autoSwitch(m, play.air.to)
 	sendState(m)
 end
 

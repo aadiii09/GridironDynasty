@@ -114,6 +114,9 @@ end
 -- Which defender you control when the CPU has the ball (Q switches during the play)
 -- You're a free player: if you control someone with a man assignment, the AI safety takes his man.
 MatchConfig.DefaultControl = "S"
+-- On defense, automatically put you on the defender nearest the ball when it's thrown, caught or
+-- handed off (Q still switches manually).
+MatchConfig.AutoSwitch = true
 MatchConfig.ControlCycle = { "S", "LB1", "LB2", "CB1", "CB2", "DL1", "DL2" }
 
 -- Card attribute -> movement speed (studs/second)

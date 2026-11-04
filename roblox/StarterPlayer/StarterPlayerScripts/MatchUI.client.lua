@@ -5,6 +5,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local MatchConfig = require(ReplicatedStorage.Shared.MatchConfig)
@@ -26,6 +27,8 @@ local F = UI.Font
 local new = UI.new
 
 local state = nil
+local openChips = {} -- [receiver model] = OPEN/COVERED chip on his throw button
+local showCallout -- floating text over a player (defined below)
 local phaseChangedAt = 0 -- ignore keys for a moment after the phase changes
 
 local gui = new("ScreenGui", { Name = "MatchUI", ResetOnSpawn = false, Enabled = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling })
@@ -155,6 +158,80 @@ UI.button({ kind = "primary", text = "BACK TO LOBBY", size = UDim2.new(1, -60, 0
 	MatchAction:FireServer("leave")
 end).Parent = finalPanel
 
+-- callouts: floating text over a player when a rating wins a play ----------------------------
+function showCallout(model, text, colorHex)
+	local head = model and model:FindFirstChild("Head")
+	if not head then
+		return
+	end
+	local bb = Instance.new("BillboardGui")
+	bb.Size = UDim2.fromOffset(220, 40)
+	bb.StudsOffsetWorldSpace = Vector3.new(0, 5.5, 0)
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.Adornee = head
+	local label = UI.text({ Text = text, FontFace = F.Display, TextScaled = false, TextSize = 26, TextColor3 = Color3.fromHex(colorHex or "ffffff"), TextStrokeTransparency = 0.2, Size = UDim2.fromScale(1, 1) })
+	label.Parent = bb
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0.4
+	scale.Parent = label
+	bb.Parent = player.PlayerGui
+	TweenService:Create(scale, TweenInfo.new(0.25, Enum.EasingStyle.Back), { Scale = 1 }):Play()
+	TweenService:Create(bb, TweenInfo.new(1.4, Enum.EasingStyle.Quad), { StudsOffsetWorldSpace = Vector3.new(0, 8, 0) }):Play()
+	task.delay(0.9, function()
+		TweenService:Create(label, TweenInfo.new(0.5), { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+	end)
+	task.delay(1.5, function()
+		bb:Destroy()
+	end)
+end
+
+-- open / covered: target rings and throw buttons colored by each receiver's separation, live ---
+local DEFENDER_SLOTS = { CB1 = true, CB2 = true, LB1 = true, LB2 = true, S = true, DL1 = true, DL2 = true }
+RunService.RenderStepped:Connect(function()
+	local s = state
+	if not s or s.possession ~= "user" or s.phase ~= "live" or s.playState ~= "dropback" or not s.ball or not s.ball.Parent then
+		return
+	end
+	local field = s.ball.Parent
+	local defs = {}
+	for _, m in field:GetChildren() do
+		if DEFENDER_SLOTS[m.Name] and m:IsA("Model") then
+			local root, head = m:FindFirstChild("HumanoidRootPart"), m:FindFirstChild("Head")
+			if root and head and head.Transparency < 1 then
+				table.insert(defs, root.Position)
+			end
+		end
+	end
+	for _, ring in field:GetDescendants() do
+		if ring.Name == "TargetRing" then
+			local rcv = ring.Parent
+			local root = rcv and rcv:FindFirstChild("HumanoidRootPart")
+			if root then
+				local sep = math.huge
+				for _, d in defs do
+					sep = math.min(sep, (Vector3.new(d.X, 0, d.Z) - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude)
+				end
+				local color, word
+				if sep >= 7 then
+					color, word = C.Accent, "OPEN"
+				elseif sep >= 3.5 then
+					color, word = C.Gold, "TIGHT"
+				else
+					color, word = C.Red, "COVERED"
+				end
+				ring.Color = color
+				local chip = openChips[rcv]
+				if chip then
+					chip.BackgroundColor3 = color
+					chip.Text = word
+					chip.TextColor3 = C.BG
+				end
+			end
+		end
+	end
+end)
+
 -- render -------------------------------------------------------------------------------------
 local function render()
 	local s = state
@@ -208,7 +285,13 @@ local function render()
 		end).Parent = controls
 		switchButton().Parent = controls
 	elseif s.phase == "live" and not userBall then
-		hint.Text = "Run into the ball carrier to tackle  -  get under a throw to pick it off  -  Q switches"
+		if s.playState == "air" then
+			hint.Text = "BALL IN THE AIR  -  run to the GOLD CIRCLE to pick it off or break it up"
+		elseif s.playState == "carry" then
+			hint.Text = "Chase the GOLD ball carrier and run into him to tackle  -  Q switches"
+		else
+			hint.Text = "Rush the QB or cover your man  -  you'll jump to the defender nearest the ball when it's thrown"
+		end
 		switchButton().Parent = controls
 	elseif s.phase == "presnap" then
 		hint.Text = s.play == "run" and "Snap it and take the handoff" or "Snap it, then throw to a yellow ring (1-4)"
@@ -216,13 +299,20 @@ local function render()
 			MatchAction:FireServer("snap")
 		end).Parent = controls
 	elseif s.phase == "live" and s.playState == "dropback" and s.play ~= "run" then
-		hint.Text = "THROW  (1-4)  -  or run past the line to scramble"
+		hint.Text = "THROW  (1-4)  -  GREEN = open, RED = covered  -  or run past the line to scramble"
+		table.clear(openChips)
 		for _, t in s.targets do
 			if t.available then
-				local b = UI.button({ kind = "gold", text = ("%s %s"):format(t.pos, t.name), size = UDim2.fromOffset(200, 60), order = t.key, textSize = 15 }, function()
+				local b = UI.button({ kind = "gold", text = ("%s %s"):format(t.pos, t.name), size = UDim2.fromOffset(210, 66), order = t.key, textSize = 15 }, function()
 					MatchAction:FireServer("throw", t.key)
 				end)
 				UI.chip(tostring(t.key), C.BG, { TextColor3 = C.Gold, Position = UDim2.fromOffset(-6, -8), ZIndex = 3 }).Parent = b
+				UI.text({ Text = ("%d OVR  -  SPD %d  -  CTH %d"):format(t.ovr or 0, t.spd or 0, t.cth or 0), FontFace = F.Bold, TextColor3 = C.BG, TextTransparency = 0.15, TextScaled = false, TextSize = 11, Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 1, -16), ZIndex = 3 }).Parent = b
+				local chip = UI.chip("...", C.BG, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 6, 0, -8), ZIndex = 3 })
+				chip.Parent = b
+				if t.model then
+					openChips[t.model] = chip
+				end
 				b.Parent = controls
 			end
 		end
@@ -243,6 +333,10 @@ local function render()
 end
 
 Remotes:WaitForChild("MatchState").OnClientEvent:Connect(function(s)
+	if s.event == "callout" then
+		showCallout(s.model, s.text, s.color)
+		return
+	end
 	if s.event == "fall" then
 		MatchFX.Fall()
 		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
