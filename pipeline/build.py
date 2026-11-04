@@ -10,7 +10,11 @@ Rules this script enforces:
   * docs/cards.json contains no real names, IDs, numbers or headshots
     (checked at the end; the script fails instead of writing if it finds any).
 
+Only weeks whose games are all final (and fully loaded in nflverse) are used. When nothing new
+has happened since the published cards, nothing is written.
+
 Run:  .venv\\Scripts\\python.exe -I -X utf8 pipeline\\build.py [--season 2026] [--offline]
+Weekly automation: pipeline\\weekly_update.ps1
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ TEAM_MAP = PRIVATE / "team_map.json"
 TEAMS = Path(__file__).parent / "teams.json"
 
 BASE_URL = "https://github.com/nflverse/nflverse-data/releases/download"
+SCHEDULE_URL = "https://github.com/nflverse/nfldata/raw/master/data/games.csv"
 
 # ---------------------------------------------------------------- positions
 
@@ -210,7 +215,29 @@ def load(season: int, offline: bool):
     roster = read(fetch(f"roster_weekly_{season}.csv", f"{BASE_URL}/weekly_rosters/roster_weekly_{season}.csv", offline))
     snaps = read(fetch(f"snap_counts_{season}.csv", f"{BASE_URL}/snap_counts/snap_counts_{season}.csv", offline))
     combine = read(fetch("combine.csv", f"{BASE_URL}/combine/combine.csv", offline))
-    return stats, roster, snaps, combine
+    games = read(fetch("games.csv", SCHEDULE_URL, offline))
+    return stats, roster, snaps, combine, games
+
+
+def last_complete_week(season: int, games, stats, snaps) -> int:
+    """The latest regular-season week whose games are ALL final and whose box scores and snap
+    counts are in for every team that played. Cards are permanent, so a half-loaded week (e.g.
+    Sunday's games in but not Monday night's) must never be used."""
+    g = games.filter((pl.col("season") == season) & (pl.col("game_type") == "REG"))
+    done = 0
+    for week in sorted(g["week"].unique().to_list()):
+        wk = g.filter(pl.col("week") == week)
+        if wk["home_score"].null_count() > 0 or wk["away_score"].null_count() > 0:
+            break
+        played = set(wk["home_team"].to_list()) | set(wk["away_team"].to_list())
+        in_stats = set(stats.filter((pl.col("week") == week) & (pl.col("season_type") == "REG"))["team"].drop_nulls().to_list())
+        in_snaps = set(snaps.filter((pl.col("week") == week) & (pl.col("game_type") == "REG"))["team"].drop_nulls().to_list())
+        missing = (played - in_stats) | (played - in_snaps)
+        if missing:
+            print(f"  week {week}: games are final but data is still loading for {len(missing)} teams")
+            break
+        done = week
+    return done
 
 
 # ---------------------------------------------------------------- rating helpers
@@ -491,7 +518,14 @@ def main():
     existing = json.loads(OUT.read_text()) if OUT.exists() else None
 
     print("Loading nflverse data...")
-    stats, roster, snaps, combine = load(args.season, args.offline)
+    stats, roster, snaps, combine, games = load(args.season, args.offline)
+    through = last_complete_week(args.season, games, stats, snaps)
+    if through == 0:
+        raise SystemExit("No completed weeks yet - nothing to build.")
+    # only use finished weeks
+    stats = stats.filter(pl.col("week") <= through)
+    snaps = snaps.filter(pl.col("week") <= through)
+    roster = roster.filter(pl.col("week") <= through)
     pool, week = build_pool(stats, roster, snaps, combine, team_map)
     print(f"  season {args.season}, through week {week}, {pool.height} qualifying players")
 
@@ -569,6 +603,11 @@ def main():
                           "archetype": base["archetype"], "attrs": attrs}
             added += 1
 
+    if existing and added == 0 and not upgrade and existing.get("week") == week:
+        print(f"  no changes: data is through week {week}, same as the published cards (version {existing['version']})")
+        print("RESULT unchanged")
+        return
+
     out = {
         "version": (existing["version"] + 1) if existing else 1,
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -598,6 +637,7 @@ def main():
     print(f"  wrote {OUT.relative_to(ROOT)}: {len(players)} players, {len(cards)} cards ({added} new), "
           f"{len(text) // 1024} KB, version {out['version']}")
     print("  tiers:", ", ".join(f"{t}={tiers.get(t, 0)}" for _, t in TIERS))
+    print(f"RESULT updated week={week} version={out['version']} added={added}")
 
 
 if __name__ == "__main__":

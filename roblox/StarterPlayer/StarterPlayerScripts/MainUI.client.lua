@@ -1166,7 +1166,52 @@ local function tierOddsText(packId)
 	return ("ICON %s%%  -  ELITE %s%%  -  EPIC %s%%"):format(o.Icon, o.Elite, o.Epic)
 end
 
+-- The newest Week Standout cards (made from last week's real top performers)
+local function latestStandouts()
+	CardData.Ensure()
+	local week, list = 0, {}
+	for _, c in CardData.All() do
+		if c.program == "Week Standout" and c.week > week then
+			week = c.week
+		end
+	end
+	for _, c in CardData.All() do
+		if c.program == "Week Standout" and c.week == week then
+			table.insert(list, c)
+		end
+	end
+	table.sort(list, function(a, b)
+		return a.ovr > b.ovr or (a.ovr == b.ovr and a.id < b.id)
+	end)
+	return week, list
+end
+
 local slides = {
+	{
+		kicker = "NEW THIS WEEK",
+		title = function()
+			local week = latestStandouts()
+			return ("WEEK %d STANDOUTS"):format(week)
+		end,
+		sub = function()
+			local _, list = latestStandouts()
+			return ("%d NEW CARDS IN PACKS  -  UP TO %d OVR"):format(#list, list[1] and list[1].ovr or 0)
+		end,
+		detail = function()
+			local _, list = latestStandouts()
+			local names = {}
+			for i = 1, math.min(2, #list) do
+				local d = CardData.Describe(list[i].id)
+				if d then
+					table.insert(names, ("%s %s %d"):format(d.card.pos, string.upper(d.last), d.card.ovr))
+				end
+			end
+			return "TOP CARDS:  " .. table.concat(names, "  -  ")
+		end,
+		c1 = Color3.fromRGB(255, 170, 30), c2 = Color3.fromRGB(90, 20, 60), art = "standout",
+		button = function() return "OPEN PACKS", "primary" end,
+		action = function() openStore("PACKS") end,
+	},
 	{
 		kicker = "FEATURED PACK", title = "THE DYNASTY PACK", sub = "10 CARDS  -  GUARANTEED ELITE OR BETTER",
 		detail = function() return tierOddsText("dynasty") end,
@@ -1225,6 +1270,12 @@ local slideButton, slideDetail
 local function showSlide(i)
 	slideIndex = i
 	local s = slides[i]
+	local function val(x)
+		if type(x) == "function" then
+			return x()
+		end
+		return x
+	end
 	slideHolder:ClearAllChildren()
 	local bg = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromScale(1, 1), ZIndex = 1 }, { UI.corner(14) })
 	UI.flowGradient(bg, s.c1, s.c2, s.c1)
@@ -1234,6 +1285,17 @@ local function showSlide(i)
 	artHolder.Parent = slideHolder
 	if s.art == "pack" then
 		new("ImageLabel", { BackgroundTransparency = 1, Image = Assets.pack, ImageColor3 = s.tint, Size = UDim2.fromOffset(136, 197), Position = UDim2.fromOffset(18, 6), Rotation = 8, ZIndex = 4 }).Parent = artHolder
+	elseif s.art == "standout" then
+		local _, list = latestStandouts()
+		local d = list[1] and CardData.Describe(list[1].id)
+		if d then
+			local face = CardRenderer.Create(d)
+			face.Size = UDim2.fromOffset(120, 180)
+			face.Position = UDim2.fromOffset(16, 34)
+			face.Rotation = 6
+			face.ZIndex = 4
+			face.Parent = artHolder
+		end
 	elseif s.art == "coins" then
 		coinStack(artHolder, 7, 64)
 	else
@@ -1243,8 +1305,8 @@ local function showSlide(i)
 	local copy = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -200, 1, -20), Position = UDim2.fromOffset(18, 14), ZIndex = 5 })
 	copy.Parent = slideHolder
 	UI.chip(s.kicker, Color3.new(0, 0, 0), { BackgroundTransparency = 0.4, TextColor3 = Color3.new(1, 1, 1), ZIndex = 6 }).Parent = copy
-	UI.text({ Text = s.title, FontFace = F.Display, TextScaled = false, TextSize = 40, TextStrokeTransparency = 0.6, Size = UDim2.new(1, 0, 0, 46), Position = UDim2.fromOffset(0, 26), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 }).Parent = copy
-	UI.text({ Text = s.sub, FontFace = F.Display, TextColor3 = Color3.fromRGB(235, 240, 250), TextScaled = false, TextSize = 16, Size = UDim2.new(1, 0, 0, 20), Position = UDim2.fromOffset(0, 74), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 }).Parent = copy
+	UI.text({ Text = val(s.title), FontFace = F.Display, TextScaled = false, TextSize = 40, TextStrokeTransparency = 0.6, Size = UDim2.new(1, 0, 0, 46), Position = UDim2.fromOffset(0, 26), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 }).Parent = copy
+	UI.text({ Text = val(s.sub), FontFace = F.Display, TextColor3 = Color3.fromRGB(235, 240, 250), TextScaled = false, TextSize = 16, Size = UDim2.new(1, 0, 0, 20), Position = UDim2.fromOffset(0, 74), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 }).Parent = copy
 	slideDetail = UI.text({ Text = s.detail(), FontFace = F.Bold, TextColor3 = Color3.fromRGB(220, 225, 235), TextTransparency = 0.15, TextScaled = false, TextSize = 12, TextWrapped = true, Size = UDim2.new(1, 0, 0, 30), Position = UDim2.fromOffset(0, 98), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 })
 	slideDetail.Parent = copy
 	local label, kind = s.button()
@@ -1278,6 +1340,22 @@ task.spawn(function()
 			end
 		end
 	end
+end)
+
+task.spawn(function()
+	local folder = ReplicatedStorage:WaitForChild("CardData")
+	local shownWeek = latestStandouts()
+	folder:GetAttributeChangedSignal("Version"):Connect(function()
+		task.wait(1) -- let the new data finish replicating
+		local week = latestStandouts()
+		if week > shownWeek then
+			shownWeek = week
+			toast(("WEEK %d STANDOUTS JUST DROPPED - new cards are in packs"):format(week), C.Gold)
+			if featured.Visible then
+				showSlide(1)
+			end
+		end
+	end)
 end)
 
 -- your top card, floating on the right
