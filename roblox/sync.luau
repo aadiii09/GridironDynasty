@@ -10,6 +10,8 @@ local files = {
 	"ReplicatedStorage/Shared/ChallengeConfig.lua",
 	"ServerScriptService/Modules/ChallengeService.lua",
 	"ServerScriptService/Modules/LeaderboardService.lua",
+	"ReplicatedStorage/Shared/RankConfig.lua",
+	"ServerScriptService/Modules/H2HService.lua",
 	"ReplicatedStorage/Client/JerseyFX.lua",
 	"ReplicatedStorage/Shared/PackConfig.lua",
 	"ReplicatedStorage/Shared/LineupConfig.lua",

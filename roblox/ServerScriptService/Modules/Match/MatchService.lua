@@ -1,10 +1,14 @@
--- MatchService (server): solo 7v7 games vs an AI team. Both sides are played live.
+-- MatchService (server): live 7v7 games. Each team ("user" side A, "cpu" side B) is either
+-- played by a human or by the AI:
+--   vs CPU:       side A = you, side B = AI team
+--   head-to-head: side A and side B are both players (ranked or friendly)
 --
--- Your ball: pick a play, snap, throw (keys 1-4) or hand off; after a catch/handoff your avatar
---   takes over the ball carrier.
--- CPU ball: pick a defense (man / deep zone / blitz) and play one defender (Q switches to the
---   defender nearest the ball). The CPU QB reads coverage and throws to the open man; its
+-- Human offense: pick a play, snap, throw (keys 1-4) or hand off; after a catch/handoff your
+--   avatar takes over the ball carrier.
+-- Human defense: pick a coverage (man / deep zone / blitz) and play one defender (Q switches,
+--   auto-switch on throws). AI offense: the QB reads coverage and throws to the open man; its
 --   ball carriers dodge tacklers.
+-- Every client gets the game from its own point of view (sendState).
 -- Every player moves and plays by his card's ratings (see Ratings.lua):
 --   SPD/ACC top speed and burst, THP ball speed + range, SAC/MAC/DAC accuracy by distance,
 --   TUP accuracy under pressure, RUN accuracy on the move, AWR CPU QB reads,
@@ -32,6 +36,7 @@ local Ratings = require(ReplicatedStorage.Shared.Ratings)
 local Jerseys = require(ReplicatedStorage.Shared.Jerseys)
 local ChallengeService = require(ServerScriptService.Modules.ChallengeService)
 local LeaderboardService = require(ServerScriptService.Modules.LeaderboardService)
+local RankConfig = require(ReplicatedStorage.Shared.RankConfig)
 
 local MatchService = {}
 
@@ -83,6 +88,38 @@ local function weighted(options)
 		end
 	end
 	return options[#options][1]
+end
+
+-- Sides ---------------------------------------------------------------------------------------
+local function other(side)
+	return side == "user" and "cpu" or "user"
+end
+
+local function isPlayer(p)
+	return typeof(p) == "Instance" and p:IsA("Player")
+end
+
+local function offHuman(m) -- the player on offense right now (nil = AI offense)
+	return m.humans[m.possession]
+end
+
+local function defHuman(m) -- the player on defense right now (nil = AI defense)
+	return m.humans[other(m.possession)]
+end
+
+local function sideOf(m, player)
+	for side, p in m.humans do
+		if p == player then
+			return side
+		end
+	end
+	return nil
+end
+
+local function fire(player, payload)
+	if isPlayer(player) and player.Parent then
+		remotes.MatchState:FireClient(player, payload)
+	end
 end
 
 local function fillerCard(pos)
@@ -168,17 +205,18 @@ end
 
 -- Avatar ----------------------------------------------------------------------------------
 
-local function avatarParts(m)
-	local char = m.player.Character
+local function avatarParts(m, player)
+	local char = player and player.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	return char, hum, root
 end
 
--- The avatar as a defender "unit" so blocking, tackling and coverage treat it like an NPC.
-local function makeAvatarUnit(m, npc)
+-- A human defender as a "unit" so blocking, tackling and coverage treat him like an NPC.
+local function makeAvatarUnit(m, npc, player)
 	local u = {
 		isAvatar = true,
+		player = player,
 		slot = npc.slot,
 		card = npc.card,
 		attrs = npc.attrs,
@@ -191,68 +229,115 @@ local function makeAvatarUnit(m, npc)
 		tackleReadyAt = 0,
 	}
 	function u:Position()
-		local _, _, root = avatarParts(m)
+		local _, _, root = avatarParts(m, player)
 		return root and root.Position or Vector3.zero
 	end
 	function u:Velocity()
-		local _, _, root = avatarParts(m)
+		local _, _, root = avatarParts(m, player)
 		return root and flat(root.AssemblyLinearVelocity) or Vector3.zero
 	end
 	return u
 end
 
--- Per-game stats for challenges (counted when the game finishes)
-local function tally(m, key, n)
-	m.tally[key] = (m.tally[key] or 0) + (n or 1)
+-- Per-game stats for challenges (counted when the game finishes), per side
+local function tally(m, side, key, n)
+	local t = m.tally[side]
+	t[key] = (t[key] or 0) + (n or 1)
 end
 
--- Floating text over a player (shown on the client): makes the rating behind a play visible
-local function callout(m, unit, text, color)
-	local model = (unit == "avatar" or (type(unit) == "table" and unit.isAvatar)) and m.player.Character or (type(unit) == "table" and unit.model)
-	if model then
-		remotes.MatchState:FireClient(m.player, { event = "callout", model = model, text = text, color = (color or Color3.new(1, 1, 1)):ToHex() })
+-- tone "good" / "bad" = good or bad for the OFFENSE; each viewer sees green when it's good for them
+local function colorFor(m, side, tone)
+	if typeof(tone) == "Color3" then
+		return tone
+	elseif tone == "good" or tone == "bad" then
+		local goodForViewer = (tone == "good") == (side == m.possession)
+		return goodForViewer and GREEN or RED
+	end
+	return nil
+end
+
+-- Floating text over a player (shown on every human's client): the rating behind a play
+local function callout(m, unit, text, tone)
+	local model
+	if unit == "avatar" then
+		local p = offHuman(m)
+		model = p and p.Character
+	elseif type(unit) == "table" and unit.isAvatar then
+		model = unit.player and unit.player.Character
+	elseif type(unit) == "table" then
+		model = unit.model
+	end
+	if not model then
+		return
+	end
+	for side, p in m.humans do
+		local c = colorFor(m, side, tone) or Color3.new(1, 1, 1)
+		fire(p, { event = "callout", model = model, text = text, color = c:ToHex() })
 	end
 end
 
-local function nameOf(unit)
+-- viewer: the player reading it ("YOU" for himself, his name for the other human)
+local function nameOf(unit, viewer)
 	if unit and unit.isAvatar then
-		return "YOU"
+		if unit.player == viewer or viewer == nil then
+			return "YOU"
+		end
+		return string.upper(unit.player.DisplayName or unit.player.Name or "")
 	end
 	return unit and string.upper(unit.info and unit.info.last or "") or ""
 end
 
+local function teamName(m, side)
+	local team = m[side] and m[side].team
+	return team and string.upper(team.name) or ""
+end
+
 -- State to client -----------------------------------------------------------------------
 
-local function sendState(m, message, color)
-	local userBall = m.possession == "user"
+-- message / color: a value, or function(viewer, side) for text that depends on who reads it
+local function stateFor(m, viewer, side, message, color)
+	local offense = m.possession == side
+	local opp = other(side)
 	local targets = {}
-	if userBall then
+	if offense then
 		for i, slotId in MatchConfig.Targets do
 			local route = m.call and m.call.routes[slotId]
 			local unit = m.units.Offense[slotId]
 			table.insert(targets, {
-				key = i, slot = slotId, pos = unit.card.pos, name = nameOf(unit), available = type(route) == "table",
+				key = i, slot = slotId, pos = unit.card.pos, name = nameOf(unit, viewer), available = type(route) == "table",
 				ovr = unit.card.ovr, spd = unit.attrs.SPD, cth = unit.attrs.CTH, model = unit.model,
 			})
 		end
 	end
-	local controlled = not userBall and m.units.Defense[m.controlSlot]
-	-- field position from YOUR point of view
-	local yourYards = userBall and m.los / Y or MatchConfig.FieldYards - m.los / Y
-	remotes.MatchState:FireClient(m.player, {
-		phase = m.phase,
-		possession = m.possession,
-		you = m.score.you,
-		cpu = m.score.cpu,
-		opponent = { id = m.cpu.team.id, city = m.cpu.team.city, name = m.cpu.team.name, primary = m.cpu.team.primary, secondary = m.cpu.team.secondary },
+	local controlled = not offense and m.avatarUnit and m.avatarUnit.player == viewer and m.units.Defense[m.controlSlot]
+	-- field position from this viewer's point of view
+	local yourYards = offense and m.los / Y or MatchConfig.FieldYards - m.los / Y
+	local phase = m.phase
+	if phase == "calls" then
+		if offense then
+			phase = m.call and "waiting" or "playcall"
+		else
+			phase = m.defCall and "waiting" or "defcall"
+		end
+	end
+	local msg = type(message) == "function" and message(viewer, side) or message
+	local col = type(color) == "function" and color(viewer, side) or colorFor(m, side, color)
+	local oppTeam = m[opp].team
+	return {
+		phase = phase,
+		mode = m.mode,
+		possession = offense and "user" or "cpu",
+		you = m.score[side],
+		cpu = m.score[opp],
+		opponent = { id = oppTeam.id, city = oppTeam.city, name = oppTeam.name, primary = oppTeam.primary, secondary = oppTeam.secondary, human = oppTeam.human },
 		drive = m.drive,
 		drives = MatchConfig.DrivesPerTeam,
 		down = m.down,
 		toGo = m.firstDown >= L and "GOAL" or tostring(math.max(1, math.ceil((m.firstDown - m.los) / Y - 0.01))),
 		spot = MatchConfig.SpotText(yourYards),
-		ratings = { you = m.user.ratings, cpu = m.cpu.ratings },
-		play = m.call and m.call.id,
-		defCall = m.defCall,
+		ratings = { you = m[side].ratings, cpu = m[opp].ratings },
+		play = (offense or m.phase ~= "calls") and m.call and m.call.id or nil,
+		defCall = (not offense or m.phase ~= "calls") and m.defCall or nil,
 		playState = m.play and m.play.state,
 		air = (m.play and m.play.state == "air" and m.play.air) and {
 			from = m.play.air.from,
@@ -262,16 +347,24 @@ local function sendState(m, message, color)
 			startedAt = m.play.air.startedAt,
 		} or nil,
 		targets = targets,
-		control = controlled and { slot = m.controlSlot, pos = controlled.card.pos, name = nameOf(controlled) } or nil,
+		control = controlled and { slot = m.controlSlot, pos = controlled.card.pos, name = nameOf(controlled, viewer) } or nil,
+		canSnap = m.phase == "presnap" and (offense or not offHuman(m)),
+		clockEndsAt = m.clockEndsAt,
 		-- for the broadcast camera
 		losWorld = m.field:ToWorld(0, m.los, 0),
 		downfield = m.field:Downfield(),
 		ball = m.ball,
-		message = message,
-		messageColor = color and color:ToHex(),
-		final = m.final,
-		difficulty = m.difficulty and m.difficulty.name,
-	})
+		message = msg,
+		messageColor = col and col:ToHex(),
+		final = m.final and m.final[side],
+		difficulty = m.modeLabel,
+	}
+end
+
+local function sendState(m, message, color)
+	for side, p in m.humans do
+		fire(p, stateFor(m, p, side, message, color))
+	end
 end
 
 -- Possession + formation --------------------------------------------------------------------
@@ -279,6 +372,7 @@ end
 local function setPossession(m, who)
 	m.possession = who
 	m.field.flipped = who == "cpu"
+	m.controlSlot = m.control[other(who)] or MatchConfig.DefaultControl
 	local off = who == "user" and m.user or m.cpu
 	local def = who == "user" and m.cpu or m.user
 	m.units = { Offense = off.off, Defense = def.def }
@@ -290,8 +384,8 @@ local function setPossession(m, who)
 	end
 end
 
-local function placeAvatar(m, cf, speed)
-	local char, hum, root = avatarParts(m)
+local function placeAvatar(m, player, cf, speed)
+	local char, hum, root = avatarParts(m, player)
 	if not root then
 		return
 	end
@@ -307,14 +401,14 @@ local function lineUp(m)
 		ring:Destroy()
 	end
 	m.rings = {}
-	local userBall = m.possession == "user"
+	local offHum, defHum = offHuman(m), defHuman(m)
 	for slotId, unit in m.units.Offense do
 		local spot = MatchConfig.Formation.Offense[slotId]
 		local cf = m.field:CFrameAt(spot[1] * Y, m.los + spot[2] * Y, 0, true)
 		unit.home = cf.Position
-		if userBall and slotId == "QB" then
+		if offHum and slotId == "QB" then
 			unit:Hide(true)
-			placeAvatar(m, cf, unit.speed)
+			placeAvatar(m, offHum, cf, unit.speed)
 		else
 			unit:Hide(false)
 			unit:Place(cf)
@@ -326,10 +420,10 @@ local function lineUp(m)
 		local spot = MatchConfig.Formation.Defense[slotId]
 		local cf = m.field:CFrameAt(spot[1] * Y, m.los + spot[2] * Y, 0, false)
 		unit.home = cf.Position
-		if not userBall and slotId == m.controlSlot then
+		if defHum and slotId == m.controlSlot then
 			unit:Hide(true)
-			placeAvatar(m, cf, unit.speed)
-			m.avatarUnit = makeAvatarUnit(m, unit)
+			placeAvatar(m, defHum, cf, unit.speed)
+			m.avatarUnit = makeAvatarUnit(m, unit, defHum)
 		else
 			unit:Hide(false)
 			unit:Place(cf)
@@ -345,7 +439,7 @@ local function lineUp(m)
 			setPose(unit, PRESNAP_POSE[slotId] or ((pos == "OL" or pos == "DL") and "stance3" or "stance2"))
 		end
 	end
-	holdBall(m, userBall and "avatar" or m.units.Offense.QB)
+	holdBall(m, offHum and "avatar" or m.units.Offense.QB)
 end
 
 local function clearRings(m)
@@ -502,7 +596,8 @@ end
 -- holder: "avatar" or an Npc
 function holdBall(m, holder)
 	releaseBall(m)
-	local char = holder == "avatar" and m.player.Character or (holder and holder.model)
+	local offHum = offHuman(m)
+	local char = holder == "avatar" and offHum and offHum.Character or (holder ~= "avatar" and holder and holder.model)
 	local hand = char and (char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm") or char:FindFirstChild("HumanoidRootPart"))
 	setBallVisible(m, true)
 	if not hand then
@@ -562,7 +657,7 @@ local function carrierPos(m)
 	end
 	local c = m.play and m.play.carrier
 	if c == "avatar" then
-		local _, _, root = avatarParts(m)
+		local _, _, root = avatarParts(m, offHuman(m))
 		return root and root.Position
 	end
 	return c and c:Position()
@@ -574,7 +669,7 @@ local function carrierVel(m)
 	end
 	local c = m.play and m.play.carrier
 	if c == "avatar" then
-		local _, _, root = avatarParts(m)
+		local _, _, root = avatarParts(m, offHuman(m))
 		return root and flat(root.AssemblyLinearVelocity) or Vector3.zero
 	end
 	return c and c:Velocity() or Vector3.zero
@@ -604,7 +699,8 @@ end
 -- Your ball: put your avatar in place of an offensive NPC (catch or handoff).
 local function swapInto(m, slotId)
 	local unit = m.units.Offense[slotId]
-	local char, hum, root = avatarParts(m)
+	local player = offHuman(m)
+	local char, hum, root = avatarParts(m, player)
 	if not root then
 		return
 	end
@@ -620,7 +716,7 @@ local function swapInto(m, slotId)
 	m.play.carrierCard = unit.card
 	m.play.carrierName = nameOf(unit)
 	hum.WalkSpeed = unit.speed
-	m.avatarSpeed, m.avatarRamp, m.avatarAccelFrom = unit.speed, unit.rampTime, os.clock() - unit.rampTime * 0.5
+	m.av[player] = { speed = unit.speed, ramp = unit.rampTime, accelFrom = os.clock() - unit.rampTime * 0.5 }
 	m.play.state = "carry"
 	setPose(qb, "block")
 	holdBall(m, "avatar")
@@ -641,7 +737,8 @@ end
 local function switchControl(m, slotId)
 	local target = m.units.Defense[slotId]
 	local current = m.units.Defense[m.controlSlot]
-	local char, hum, root = avatarParts(m)
+	local player = defHuman(m)
+	local char, hum, root = avatarParts(m, player)
 	if not target or not current or target == current or not root then
 		return
 	end
@@ -655,15 +752,17 @@ local function switchControl(m, slotId)
 	current:Hide(false)
 	current:Place(CFrame.new(myCF.Position - Vector3.new(0, 3, 0)) * myCF.Rotation)
 	m.controlSlot = slotId
-	m.avatarUnit = makeAvatarUnit(m, target)
+	m.control[other(m.possession)] = slotId
+	m.avatarUnit = makeAvatarUnit(m, target, player)
 	hum.WalkSpeed = target.speed
-	m.avatarSpeed, m.avatarRamp = target.speed, target.rampTime
+	local av = m.av[player]
+	m.av[player] = { speed = target.speed, ramp = target.rampTime, accelFrom = av and av.accelFrom or os.clock() }
 end
 
 -- On defense, jump you to the defender closest to where the ball is going (throw, catch,
 -- handoff), unless you're already near it. You can still switch yourself with Q.
 local function autoSwitch(m, pos)
-	if not MatchConfig.AutoSwitch or m.possession ~= "cpu" or not m.avatarUnit or not pos then
+	if not MatchConfig.AutoSwitch or not defHuman(m) or not m.avatarUnit or not pos then
 		return
 	end
 	local mine = hdist(m.avatarUnit:Position(), pos)
@@ -739,7 +838,7 @@ local function attemptTackle(m, def, now)
 		-- the ball carrier goes down
 		local carrier = m.play.carrier
 		if carrier == "avatar" then
-			remotes.MatchState:FireClient(m.player, { event = "fall" })
+			fire(offHuman(m), { event = "fall" })
 		elseif carrier then
 			carrier:Fall()
 		end
@@ -762,12 +861,15 @@ local function attemptTackle(m, def, now)
 		-- beaten: the better the move beat him, the longer he's out of the play
 		def.stunUntil = now + math.clamp(0.55 + (move - tak) * 0.01, 0.4, 1)
 		log(("tackle broken: %s %d vs TAK %d (%.0f%% to tackle)"):format(moveName, move, tak, p * 100))
-		callout(m, m.play.carrier, moveName .. "!", m.possession == "user" and GREEN or RED)
-		if def.isAvatar then
-			sendState(m, moveName == "ESCAPED" and "HE ESCAPED!" or (moveName .. " - MISSED TACKLE!"), RED)
-		elseif m.possession == "user" then
-			tally(m, "broken")
-			sendState(m, moveName .. "!", GREEN)
+		callout(m, m.play.carrier, moveName .. "!", "good")
+		tally(m, m.possession, "broken")
+		if def.isAvatar or offHuman(m) then
+			sendState(m, function(_, side)
+				if side == m.possession then
+					return moveName .. "!"
+				end
+				return moveName == "ESCAPED" and "HE ESCAPED!" or (moveName .. " - MISSED TACKLE!")
+			end, "good")
 		end
 	end
 end
@@ -846,7 +948,7 @@ local function routeBreak(m, unit, route, coverage, now)
 				local lag = math.clamp(0.2 + (rr - d.attrs.MCV) * 0.012, 0.05, 0.6)
 				d.reactAt = math.max(d.reactAt or 0, now + lag)
 				if lag >= 0.36 then
-					callout(m, unit, "SHOOK HIM!", GREEN)
+					callout(m, unit, "SHOOK HIM!", "good")
 				end
 			end
 		end
@@ -868,11 +970,11 @@ local function pressAtLine(m, now)
 			if chance(math.clamp(0.45 + edge * 0.025, 0.08, 0.92)) then
 				wr.engagedUntil = now + math.clamp(0.45 + edge * 0.01, 0.25, 0.75)
 				wr.engageFactor = 0.7
-				callout(m, wr, "JAMMED", RED)
+				callout(m, wr, "JAMMED", "bad")
 				log(("press: %s jammed %s (PRS %d vs RLS %d)"):format(cb, wrSlot, d.attrs.PRS, wr.attrs.RLS))
 			else
 				d.stunUntil = now + 0.35
-				callout(m, wr, "WON THE RELEASE", GREEN)
+				callout(m, wr, "WON THE RELEASE", "good")
 				log(("press: %s beat the jam by %s (RLS %d vs PRS %d)"):format(wrSlot, cb, wr.attrs.RLS, d.attrs.PRS))
 			end
 		end
@@ -887,7 +989,6 @@ local function think(m, now)
 	end
 	local cVel = carrierVel(m)
 	local off, def = m.units.Offense, m.units.Defense
-	local userBall = m.possession == "user"
 	local defList = defenders(m)
 	local call = m.defCall or "man"
 	-- you're a free player: the AI safety picks up the man of whoever you control
@@ -1030,7 +1131,7 @@ local function think(m, now)
 		end
 	end
 
-	if not userBall and play.state == "dropback" and not m.call.run then
+	if not offHuman(m) and play.state == "dropback" and not m.call.run then
 		cpuQbDecide(m, now)
 	end
 
@@ -1106,26 +1207,28 @@ local function resolveCatch(m)
 			r.CTH, r.CIT, r.SPC, rcvDist, sep, cov, nearest and nearest.isAvatar and " (you)" or "", pCatch * 100))
 		if chance(pCatch) then
 			if nearest and sep < 2.2 then
-				callout(m, rcv, "CATCH IN TRAFFIC", m.possession == "user" and GREEN or RED)
+				callout(m, rcv, "CATCH IN TRAFFIC", "good")
 			elseif rcvDist > 2.4 then
-				callout(m, rcv, "SPECTACULAR CATCH", m.possession == "user" and GREEN or RED)
+				callout(m, rcv, "SPECTACULAR CATCH", "good")
 			end
-			if m.possession == "user" then
-				m.play.caught = true
+			local catchMsg = function(viewer, side)
+				return side == m.possession and "CAUGHT! RUN!" or ("CAUGHT BY " .. nameOf(rcv, viewer) .. " - TACKLE HIM!")
+			end
+			m.play.caught = true
+			if offHuman(m) then
 				swapInto(m, rcv.slot)
-				sendState(m, "CAUGHT! RUN!", GREEN)
 			else
 				giveTo(m, rcv)
-				autoSwitch(m, rcv:Position())
-				sendState(m, "CAUGHT BY " .. nameOf(rcv) .. " - TACKLE HIM!", RED)
 			end
+			autoSwitch(m, rcv:Position())
+			sendState(m, catchMsg, "good")
 			return
 		end
 		if breakup > 0 then
-			callout(m, me, "BROKEN UP!", GREEN)
+			callout(m, me, "BROKEN UP!", "bad")
 			endPlay(m, "drop", nil, me, rcv)
 		else
-			callout(m, rcv, "DROPPED", m.possession == "user" and RED or GREEN)
+			callout(m, rcv, "DROPPED", "bad")
 			endPlay(m, "drop", nil, nearest, rcv)
 		end
 		return
@@ -1147,19 +1250,21 @@ local function step(m)
 
 	-- your player: builds up to top speed (ACC); on defense slowed while a blocker is on you,
 	-- frozen briefly after a missed tackle
-	local _, myHum = avatarParts(m)
-	if myHum and m.avatarSpeed then
-		local speed = m.avatarSpeed * MatchConfig.Ramp(m.avatarRamp or 0.6, now - (m.avatarAccelFrom or 0))
-		local u = m.avatarUnit
-		if u then
-			if now < u.stunUntil then
-				speed *= 0.3
-				m.avatarAccelFrom = u.stunUntil
-			elseif now < u.engagedUntil then
-				speed *= (1 - u.engageFactor)
+	for player, av in m.av do
+		local _, hum = avatarParts(m, player)
+		if hum and av.speed then
+			local speed = av.speed * MatchConfig.Ramp(av.ramp or 0.6, now - (av.accelFrom or 0))
+			local u = m.avatarUnit
+			if u and u.player == player then
+				if now < u.stunUntil then
+					speed *= 0.3
+					av.accelFrom = u.stunUntil
+				elseif now < u.engagedUntil then
+					speed *= (1 - u.engageFactor)
+				end
 			end
+			hum.WalkSpeed = speed
 		end
-		myHum.WalkSpeed = speed
 	end
 
 	local pos = carrierPos(m)
@@ -1177,7 +1282,7 @@ local function step(m)
 		endPlay(m, "td", fy)
 		return
 	end
-	if m.possession == "user" and play.state == "dropback" and fy > m.los + Y then
+	if offHuman(m) and play.state == "dropback" and fy > m.los + Y then
 		play.state = "carry" -- QB scramble: no throwing past the line
 		play.carrierCard = m.units.Offense.QB.card
 		sendState(m, "SCRAMBLE!", GOLD)
@@ -1237,84 +1342,65 @@ function endPlay(m, result, spotY, defender, receiver)
 			end
 		end
 	end
-	local _, hum = avatarParts(m)
-	if hum then
-		hum.WalkSpeed = 0
+	for p in m.av do
+		local _, hum = avatarParts(m, p)
+		if hum then
+			hum.WalkSpeed = 0
+		end
+	end
+	for _, p in m.humans do
+		local _, hum = avatarParts(m, p)
+		if hum then
+			hum.WalkSpeed = 0
+		end
 	end
 
-	local userBall = m.possession == "user"
+	local off, def = m.possession, other(m.possession)
 	local yards = spotY and (spotY - m.los) / Y or 0
-	if userBall then
-		if result == "td" then
-			tally(m, "td")
-			tally(m, play.caught and "passTd" or "rushTd")
-		end
-		if spotY and yards > 0 and (result == "td" or result == "tackle" or result == "out" or result == "timeout") then
-			tally(m, "yards", math.floor(yards + 0.5))
-		end
-	else
-		if result == "sack" then
-			tally(m, "sacks")
-		elseif result == "int" then
-			tally(m, "ints")
-		elseif result == "fumble" then
-			tally(m, "fumbles")
-		end
-		if result == "tackle" or result == "sack" or result == "fumble" then
-			tally(m, "stops")
-		end
+	if result == "td" then
+		tally(m, off, "td")
+		tally(m, off, play.caught and "passTd" or "rushTd")
 	end
-	local msg, color, driveOver = nil, Color3.new(1, 1, 1), false
-	local good, bad = GREEN, RED
-	if not userBall then
-		good, bad = RED, GREEN -- from your point of view, CPU gains are bad
+	if spotY and yards > 0 and (result == "td" or result == "tackle" or result == "out" or result == "timeout") then
+		tally(m, off, "yards", math.floor(yards + 0.5))
+	end
+	if result == "sack" then
+		tally(m, def, "sacks")
+	elseif result == "int" then
+		tally(m, def, "ints")
+	elseif result == "fumble" then
+		tally(m, def, "fumbles")
+	end
+	if result == "tackle" or result == "sack" or result == "fumble" then
+		tally(m, def, "stops")
 	end
 
+	local driveOver, suffix = false, nil
+	local tone -- "good"/"bad" for the offense, or function(viewer, side)
 	if result == "td" then
-		if userBall then
-			m.score.you += MatchConfig.TouchdownPoints
-			msg = "TOUCHDOWN!"
-		else
-			m.score.cpu += MatchConfig.TouchdownPoints
-			msg = string.upper(m.cpu.team.name) .. " TOUCHDOWN"
-		end
-		color, driveOver = good, true
+		m.score[off] += MatchConfig.TouchdownPoints
+		tone, driveOver = "good", true
 		local ez = MatchConfig.EndZoneYards * Y
+		local confetti = m[off].confetti
 		for _, x in { -20, 0, 20 } do
-			burst(m, m.field:ToWorld(x, L + ez / 2, 1), userBall and m.jersey.secondary or Color3.fromHex(m.cpu.team.secondary), 70, "confetti")
+			burst(m, m.field:ToWorld(x, L + ez / 2, 1), confetti, 70, "confetti")
 		end
-	elseif result == "fumble" then
-		msg = userBall and ("FUMBLE! " .. nameOf(defender) .. " forced it - turnover") or ("FUMBLE! Forced by " .. nameOf(defender) .. "!")
-		color, driveOver = bad, true
-	elseif result == "int" then
-		msg = (userBall and "INTERCEPTED by " or "INTERCEPTION by ") .. nameOf(defender) .. (userBall and "" or "!")
-		color, driveOver = bad, true
+	elseif result == "fumble" or result == "int" then
+		tone, driveOver = "bad", true
 	elseif result == "incomplete" or result == "drop" then
-		if result == "drop" then
-			msg = "DROPPED by " .. nameOf(receiver)
-			if defender and defender.isAvatar then
-				msg = "PASS BROKEN UP by YOU!"
-			end
-		else
-			msg = "INCOMPLETE"
+		tone = function(_, side)
+			return side == m.possession and Color3.fromRGB(255, 196, 46) or GREEN
 		end
-		color = userBall and Color3.fromRGB(255, 196, 46) or GREEN
 		spotY = m.los
 	elseif spotY and spotY < 0 then
-		if userBall then
-			m.score.cpu += MatchConfig.SafetyPoints
-		else
-			m.score.you += MatchConfig.SafetyPoints
-		end
-		msg, color, driveOver = "SAFETY", bad, true
+		m.score[def] += MatchConfig.SafetyPoints
+		tone, driveOver = "bad", true
 	else
-		local by = nameOf(defender)
-		local verb = result == "sack" and ("SACKED by " .. by) or result == "out" and "Out of bounds" or result == "timeout" and "Whistle" or ((play.bigHit and "BIG HIT by " or "Tackled by ") .. by)
-		msg = ("%s  (%+d yds)"):format(verb, math.floor(yards + (yards >= 0 and 0.5 or -0.5)))
-		if userBall then
-			color = yards >= 0 and Color3.new(1, 1, 1) or Color3.fromRGB(255, 120, 90)
-		else
-			color = yards <= 2 and GREEN or Color3.new(1, 1, 1)
+		tone = function(_, side)
+			if side == m.possession then
+				return yards >= 0 and Color3.new(1, 1, 1) or Color3.fromRGB(255, 120, 90)
+			end
+			return yards <= 2 and GREEN or Color3.new(1, 1, 1)
 		end
 	end
 
@@ -1323,23 +1409,55 @@ function endPlay(m, result, spotY, defender, receiver)
 		if m.los >= m.firstDown then
 			m.down = 1
 			m.firstDown = math.min(m.los + MatchConfig.FirstDownYards * Y, L)
-			msg ..= "  -  FIRST DOWN"
+			suffix = "first"
 		else
 			m.down += 1
 			if m.down > 4 then
-				msg ..= userBall and "  -  TURNOVER ON DOWNS" or "  -  STOPPED ON DOWNS!"
-				if not userBall then
-					color = GREEN
-				end
+				suffix = "downs"
+				tone = "bad"
 				driveOver = true
 			end
 		end
 	end
 
+	local offName = teamName(m, off)
+	local function message(viewer, side)
+		local mine = side == m.possession -- this viewer is on offense
+		local msg
+		if result == "td" then
+			msg = mine and "TOUCHDOWN!" or (offName .. " TOUCHDOWN")
+		elseif result == "fumble" then
+			msg = mine and ("FUMBLE! " .. nameOf(defender, viewer) .. " forced it - turnover") or ("FUMBLE! Forced by " .. nameOf(defender, viewer) .. "!")
+		elseif result == "int" then
+			msg = (mine and "INTERCEPTED by " or "INTERCEPTION by ") .. nameOf(defender, viewer) .. (mine and "" or "!")
+		elseif result == "drop" then
+			if defender and defender.isAvatar then
+				msg = "PASS BROKEN UP by " .. nameOf(defender, viewer) .. "!"
+			else
+				msg = "DROPPED by " .. nameOf(receiver, viewer)
+			end
+		elseif result == "incomplete" then
+			msg = "INCOMPLETE"
+		elseif spotY and spotY < 0 then
+			msg = "SAFETY"
+		else
+			local by = nameOf(defender, viewer)
+			local verb = result == "sack" and ("SACKED by " .. by) or result == "out" and "Out of bounds" or result == "timeout" and "Whistle" or ((play.bigHit and "BIG HIT by " or "Tackled by ") .. by)
+			msg = ("%s  (%+d yds)"):format(verb, math.floor(yards + (yards >= 0 and 0.5 or -0.5)))
+		end
+		if suffix == "first" then
+			msg ..= "  -  FIRST DOWN"
+		elseif suffix == "downs" then
+			msg ..= mine and "  -  TURNOVER ON DOWNS" or "  -  STOPPED ON DOWNS!"
+		end
+		return msg
+	end
+
 	m.phase = "result"
-	m.field:SetScreen(("YOU %d  -  %d %s"):format(m.score.you, m.score.cpu, string.upper(m.cpu.team.name)))
-	log(("%s ball, %s/%s: %s after %.1fs -> %s"):format(m.possession, m.call and m.call.id or "?", m.defCall or "?", result, os.clock() - (play.t0 or os.clock()), msg))
-	sendState(m, msg, color)
+	m.clockEndsAt = nil
+	m.field:SetScreen(("%s %d  -  %d %s"):format(teamName(m, "user"), m.score.user, m.score.cpu, teamName(m, "cpu")))
+	log(("%s ball, %s/%s: %s after %.1fs -> %s"):format(m.possession, m.call and m.call.id or "?", m.defCall or "?", result, os.clock() - (play.t0 or os.clock()), message(nil, m.possession)))
+	sendState(m, message, tone)
 	local token = m.token
 	task.delay(2.6, function()
 		if m.token ~= token or not m.alive then
@@ -1355,12 +1473,13 @@ end
 
 local function snap(m)
 	local play = m.play
-	local userBall = m.possession == "user"
+	local offHum, defHum = offHuman(m), defHuman(m)
 	play.state = "dropback"
 	play.t0 = os.clock()
 	play.nextThink = 0
 	play.routes = compileRoutes(m)
-	play.carrier = userBall and "avatar" or m.units.Offense.QB
+	play.carrier = offHum and "avatar" or m.units.Offense.QB
+	m.clockEndsAt = nil
 	play.carrierCard = m.units.Offense.QB.card
 	m.phase = "live"
 	for _, side in m.units do
@@ -1377,14 +1496,16 @@ local function snap(m)
 			setPose(unit, blocker and "block" or nil)
 		end
 	end
-	local _, hum, root = avatarParts(m)
-	if root then
-		root.Anchored = false
-		hum.WalkSpeed = userBall and m.units.Offense.QB.speed or (m.avatarUnit and m.avatarUnit.speed or 16)
-		local mine = userBall and m.units.Offense.QB or m.avatarUnit
-		m.avatarSpeed = mine and mine.speed or 16
-		m.avatarRamp = mine and mine.rampTime or 0.6
-		m.avatarAccelFrom = play.t0
+	m.av = {}
+	for p, mine in { [offHum or false] = m.units.Offense.QB, [defHum or false] = m.avatarUnit } do
+		if p and mine then
+			local _, hum, root = avatarParts(m, p)
+			if root then
+				root.Anchored = false
+				hum.WalkSpeed = mine.speed
+				m.av[p] = { speed = mine.speed, ramp = mine.rampTime or 0.6, accelFrom = play.t0 }
+			end
+		end
 	end
 	pressAtLine(m, play.t0)
 	if m.call.run then
@@ -1392,14 +1513,17 @@ local function snap(m)
 		task.delay(0.45, function()
 			if m.token == token and m.play == play and play.state == "dropback" then
 				play.handoffAt = os.clock()
-				if userBall then
+				local rb = m.units.Offense.RB
+				local rbPos = rb:Position()
+				if offHuman(m) then
 					swapInto(m, "RB")
-					sendState(m, "HANDOFF - RUN!", GREEN)
 				else
-					giveTo(m, m.units.Offense.RB)
-					autoSwitch(m, m.units.Offense.RB:Position())
-					sendState(m, "IT'S A RUN!", GOLD)
+					giveTo(m, rb)
 				end
+				autoSwitch(m, rbPos)
+				sendState(m, function(_, side)
+					return side == m.possession and "HANDOFF - RUN!" or "IT'S A RUN!"
+				end, GOLD)
 			end
 		end)
 	end
@@ -1419,8 +1543,8 @@ function throwBall(m, rcv)
 	end
 	local qb = m.units.Offense.QB.attrs
 	local ballSpeed = 40 + qb.THP * 0.4 -- THP 70 -> 68, 95 -> 78 studs/s
-	if m.possession ~= "user" then
-		ballSpeed *= 0.8 -- CPU throws hang a little longer so you can react on defense
+	if defHuman(m) then
+		ballSpeed *= 0.8 -- throws hang a little longer when a human is on defense, so he can react
 	end
 	-- lead the receiver along his actual route (so throws hit him after his cut), at the speed
 	-- he's really moving (still building up, jammed, or in a cut), not just his top speed
@@ -1490,7 +1614,7 @@ function throwBall(m, rcv)
 		h = math.clamp(dist * 0.18, 3, 22),
 		target = rcv,
 	}
-	if m.possession ~= "user" then
+	if not offHuman(m) then
 		setPose(m.units.Offense.QB, "throw", 0.6)
 	end
 	releaseBall(m)
@@ -1502,10 +1626,10 @@ function throwBall(m, rcv)
 	sendState(m)
 end
 
-local function userThrow(m, key)
+local function userThrow(m, player, key)
 	local play = m.play
 	local slotId = MatchConfig.Targets[key]
-	if m.possession ~= "user" or not play or play.state ~= "dropback" or m.call.run or not slotId or not play.routes[slotId] then
+	if offHuman(m) ~= player or not play or play.state ~= "dropback" or m.call.run or not slotId or not play.routes[slotId] then
 		return
 	end
 	throwBall(m, m.units.Offense[slotId])
@@ -1524,14 +1648,75 @@ local function cpuPlayCall(m)
 	return MatchConfig.PlaysById[weighted(options)]
 end
 
+local function aiDefCall()
+	return weighted({ { "man", 60 }, { "zone", 25 }, { "blitz", 15 } })
+end
+
+-- Both calls are in: line up for the snap
+local function beginPresnap(m)
+	m.play = { state = "presnap" }
+	m.phase = "presnap"
+	if offHuman(m) then
+		tagTargets(m)
+	end
+	m.clockEndsAt = m.h2h and (workspace:GetServerTimeNow() + RankConfig.SnapSeconds) or nil
+	sendState(m)
+	if m.clockEndsAt then
+		local token = m.token
+		task.delay(RankConfig.SnapSeconds, function()
+			if m.token == token and m.alive and m.phase == "presnap" then
+				snap(m) -- play clock ran out: snap it
+			end
+		end)
+	end
+end
+
+local function makeCall(m, which, id)
+	if m.phase ~= "calls" then
+		return
+	end
+	if which == "off" and not m.call then
+		m.call = MatchConfig.PlaysById[id]
+	elseif which == "def" and not m.defCall then
+		m.defCall = id
+	end
+	if m.call and m.defCall then
+		beginPresnap(m)
+	else
+		sendState(m) -- the one who called now waits for the other
+	end
+end
+
 function nextPlay(m)
 	m.token += 1
 	m.play = nil
 	m.call = nil
 	m.defCall = nil
-	m.phase = m.possession == "user" and "playcall" or "defcall"
+	m.phase = "calls"
+	-- the AI side calls at once
+	if not offHuman(m) then
+		m.call = cpuPlayCall(m)
+	end
+	if not defHuman(m) then
+		m.defCall = aiDefCall()
+	end
 	lineUp(m)
+	m.clockEndsAt = m.h2h and (workspace:GetServerTimeNow() + RankConfig.CallSeconds) or nil
 	sendState(m)
+	if m.clockEndsAt then
+		local token = m.token
+		task.delay(RankConfig.CallSeconds, function()
+			if m.token == token and m.alive and m.phase == "calls" then
+				-- play clock ran out: call it for whoever hasn't
+				if not m.call then
+					makeCall(m, "off", cpuPlayCall(m).id)
+				end
+				if not m.defCall then
+					makeCall(m, "def", aiDefCall())
+				end
+			end
+		end)
+	end
 end
 
 function startDrive(m, who)
@@ -1539,13 +1724,15 @@ function startDrive(m, who)
 	m.los = MatchConfig.StartYard * Y
 	m.down = 1
 	m.firstDown = m.los + MatchConfig.FirstDownYards * Y
-	m.controlSlot = m.controlSlot or MatchConfig.DefaultControl
 	nextPlay(m)
-	if who == "user" then
-		sendState(m, ("YOUR BALL  -  DRIVE %d OF %d"):format(m.drive, MatchConfig.DrivesPerTeam), GREEN)
-	else
-		sendState(m, string.upper(m.cpu.team.name) .. " BALL  -  DEFENSE!", GOLD)
-	end
+	sendState(m, function(_, side)
+		if side == who then
+			return ("YOUR BALL  -  DRIVE %d OF %d"):format(m.drive, MatchConfig.DrivesPerTeam)
+		end
+		return teamName(m, who) .. " BALL  -  DEFENSE!"
+	end, function(_, side)
+		return side == who and GREEN or GOLD
+	end)
 end
 
 function nextPossession(m)
@@ -1561,18 +1748,21 @@ function nextPossession(m)
 	end
 end
 
-function finishGame(m)
-	m.token += 1
-	m.phase = "final"
-	local you, cpu = m.score.you, m.score.cpu
-	local result = you > cpu and "Win" or you < cpu and "Loss" or "Tie"
-	local vip = StoreService.IsVIP(m.player)
-	local diff = m.difficulty
-	local coins = MatchConfig.RewardFor(result, diff.id) * (vip and 2 or 1)
+-- Rewards for one human side. resultFor: "Win" / "Loss" / "Tie" from that side's view.
+local function award(m, side, result, ratingChange)
+	local player = m.humans[side]
+	local vip = isPlayer(player) and StoreService.IsVIP(player) or false
+	local coins
+	if m.h2h then
+		coins = RankConfig.Rewards[result] * (vip and 2 or 1)
+	else
+		coins = MatchConfig.RewardFor(result, m.difficulty.id) * (vip and 2 or 1)
+	end
 	local unlocked = {}
-	if PlayerData.Get(m.player) then
-		PlayerData.AddCoins(m.player, coins)
-		PlayerData.Update(m.player, function(data)
+	local opp = other(side)
+	if isPlayer(player) and PlayerData.Get(player) and not m.noRewards then
+		PlayerData.AddCoins(player, coins)
+		PlayerData.Update(player, function(data)
 			if result == "Win" then
 				data.stats.wins += 1
 				for _, j in Jerseys.NewlyUnlocked(data.stats.wins - 1, data.stats.wins) do
@@ -1583,32 +1773,100 @@ function finishGame(m)
 			else
 				data.stats.ties = (data.stats.ties or 0) + 1
 			end
+			if m.h2h then
+				local h = data.h2h or { rating = RankConfig.StartRating, wins = 0, losses = 0, ties = 0 }
+				data.h2h = h
+				h[result == "Win" and "wins" or result == "Loss" and "losses" or "ties"] += 1
+				if ratingChange then
+					h.rating = ratingChange.new
+				end
+			end
 		end)
 		local win = result == "Win" and 1 or 0
-		local t = m.tally
-		ChallengeService.Record(m.player, {
+		local hard = m.h2h or m.difficulty.order >= 3
+		local t = m.tally[side]
+		ChallengeService.Record(player, {
 			games = 1,
 			wins = win,
-			winsPro = (win == 1 and diff.order >= 2) and 1 or 0,
-			winsAllPro = (win == 1 and diff.order >= 3) and 1 or 0,
-			shutouts = (win == 1 and cpu == 0) and 1 or 0,
+			winsPro = (win == 1 and (m.h2h or m.difficulty.order >= 2)) and 1 or 0,
+			winsAllPro = (win == 1 and hard) and 1 or 0,
+			shutouts = (win == 1 and m.score[opp] == 0) and 1 or 0,
 			td = t.td, passTd = t.passTd, rushTd = t.rushTd, yards = t.yards,
 			sacks = t.sacks, ints = t.ints, fumbles = t.fumbles, stops = t.stops, broken = t.broken,
 		})
-		task.spawn(PlayerData.SaveNow, m.player) -- after the challenge progress is in
+		task.spawn(PlayerData.SaveNow, player) -- after the challenge progress is in
 		if win == 1 then
-			local profile = PlayerData.Get(m.player)
-			LeaderboardService.RecordWin(m.player, profile and profile.data.stats.wins or 0)
+			local profile = PlayerData.Get(player)
+			LeaderboardService.RecordWin(player, profile and profile.data.stats.wins or 0)
+		end
+		if ratingChange then
+			LeaderboardService.RecordRating(player, ratingChange.new)
 		end
 	end
-	m.final = { result = result, coins = coins, vip = vip, unlocked = unlocked, difficulty = diff.name, multiplier = diff.reward, tally = m.tally }
-	log(m.player.Name, result, you, cpu)
-	sendState(m, result == "Win" and "YOU WIN!" or result == "Loss" and "YOU LOSE" or "TIE GAME", result == "Win" and GREEN or Color3.fromRGB(255, 196, 46))
+	return {
+		result = result,
+		coins = coins,
+		vip = vip,
+		unlocked = unlocked,
+		difficulty = m.modeLabel,
+		multiplier = m.h2h and 1 or m.difficulty.reward,
+		tally = m.tally[side],
+		rating = ratingChange,
+		forfeit = m.forfeitBy ~= nil,
+	}
+end
+
+local function ratingOf(player)
+	local profile = isPlayer(player) and PlayerData.Get(player)
+	local h = profile and profile.data.h2h
+	return h and h.rating or RankConfig.StartRating
+end
+
+function finishGame(m)
+	if m.phase == "final" then
+		return
+	end
+	m.token += 1
+	m.phase = "final"
+	m.clockEndsAt = nil
+	if m.play and m.play.conn then
+		m.play.conn:Disconnect()
+	end
+	local a, b = m.score.user, m.score.cpu
+	-- a forfeit is a loss for whoever left, whatever the score
+	local resultA = a > b and "Win" or a < b and "Loss" or "Tie"
+	if m.forfeitBy == "user" then
+		resultA = "Loss"
+	elseif m.forfeitBy == "cpu" then
+		resultA = "Win"
+	end
+	local results = { user = resultA, cpu = resultA == "Win" and "Loss" or resultA == "Loss" and "Win" or "Tie" }
+	local changes = {}
+	if m.ranked then
+		local ra, rb = ratingOf(m.humans.user), ratingOf(m.humans.cpu)
+		local na, nb = RankConfig.Update(ra, rb, resultA == "Win" and 1 or resultA == "Tie" and 0.5 or 0)
+		changes.user = { old = ra, new = na, division = RankConfig.Division(na).name }
+		changes.cpu = { old = rb, new = nb, division = RankConfig.Division(nb).name }
+	end
+	m.final = {}
+	for side in m.humans do
+		m.final[side] = award(m, side, results[side], changes[side])
+	end
+	log(("game over (%s): %s %d - %d %s%s"):format(m.mode, teamName(m, "user"), a, b, teamName(m, "cpu"), m.forfeitBy and (" (forfeit by " .. m.forfeitBy .. ")") or ""))
+	sendState(m, function(_, side)
+		local r = results[side]
+		if m.forfeitBy and m.forfeitBy ~= side then
+			return "OPPONENT LEFT - YOU WIN!"
+		end
+		return r == "Win" and "YOU WIN!" or r == "Loss" and "YOU LOSE" or "TIE GAME"
+	end, function(_, side)
+		return results[side] == "Win" and GREEN or Color3.fromRGB(255, 196, 46)
+	end)
 end
 
 -- Lifecycle -------------------------------------------------------------------------------
 
-local function cleanup(m)
+local function destroyMatch(m)
 	if not m.alive then
 		return
 	end
@@ -1627,12 +1885,34 @@ local function cleanup(m)
 	if m.field then
 		m.field:Destroy()
 	end
-	if m.charConn then
-		m.charConn:Disconnect()
+	if m.onDestroy then
+		m.onDestroy()
 	end
-	matches[m.player] = nil
-	local char, hum, root = avatarParts(m)
-	if root and m.player.Parent then
+end
+
+-- One player leaves the game (quit, left the server, respawned): back to the lobby. In a live
+-- head-to-head game that's a forfeit. The match is torn down once no humans are left.
+local function exitPlayer(m, player)
+	local side = sideOf(m, player)
+	if not side then
+		return
+	end
+	if m.h2h and m.alive and m.phase ~= "final" then
+		m.forfeitBy = side
+		finishGame(m)
+	end
+	m.humans[side] = nil
+	if m.avatarUnit and m.avatarUnit.player == player then
+		m.avatarUnit = nil
+	end
+	m.av[player] = nil
+	if m.charConns[player] then
+		m.charConns[player]:Disconnect()
+		m.charConns[player] = nil
+	end
+	matches[player] = nil
+	local char, hum, root = avatarParts(m, player)
+	if root and (not isPlayer(player) or player.Parent) then
 		root.Anchored = false
 		hum.WalkSpeed = 16
 		Npc.Unequip(char)
@@ -1644,8 +1924,12 @@ local function cleanup(m)
 		local spawn = workspace:FindFirstChildWhichIsA("SpawnLocation")
 		char:PivotTo(spawn and (spawn.CFrame + Vector3.new(0, 4, 0)) or CFrame.new(0, 10, 0))
 	end
-	if m.player.Parent then
-		remotes.MatchState:FireClient(m.player, { phase = "ended" })
+	fire(player, { phase = "ended" })
+	if next(m.humans) == nil then
+		destroyMatch(m)
+	elseif m.phase ~= "final" then
+		-- (vs CPU only has one human, so this is a head-to-head game that just ended above)
+		sendState(m)
 	end
 end
 
@@ -1659,6 +1943,260 @@ local function buildTeam(m, cards, infos, primary, secondary, jersey)
 	return team
 end
 
+local function near(a, b)
+	return math.abs(a.R - b.R) + math.abs(a.G - b.G) + math.abs(a.B - b.B) < 0.45
+end
+
+local function jerseyOf(profile)
+	local jersey = Jerseys.Get(profile and profile.data.jersey)
+	if not profile or not Jerseys.IsUnlocked(jersey.id, profile.data.stats.wins) then
+		jersey = Jerseys.Get(Jerseys.Default)
+	end
+	return jersey
+end
+
+-- Colors for side B when they clash with side A: white away jersey (or a darker shade if A is in white)
+local function awayColors(aPrimary, bPrimary, bSecondary)
+	if near(bPrimary, aPrimary) then
+		bPrimary, bSecondary = Color3.fromRGB(236, 237, 242), bPrimary
+		if near(bPrimary, aPrimary) then
+			bPrimary, bSecondary = bSecondary:Lerp(Color3.new(0, 0, 0), 0.35), Color3.fromRGB(236, 237, 242)
+		end
+	end
+	return bPrimary, bSecondary
+end
+
+local function humanTeamInfo(player, primary, secondary)
+	local name = isPlayer(player) and player.DisplayName or (player and player.DisplayName) or "PLAYER"
+	return { id = nil, city = "", name = name, primary = primary:ToHex(), secondary = secondary:ToHex(), human = true }
+end
+
+-- opts: { mode = "cpu" | "ranked" | "friendly", a = Player, b = Player (head-to-head), difficulty }
+local function createMatch(opts)
+	local a, b = opts.a, opts.b
+	local h2h = b ~= nil
+	local profileA = isPlayer(a) and PlayerData.Get(a)
+	local profileB = isPlayer(b) and PlayerData.Get(b)
+	local difficulty = opts.difficulty or MatchConfig.DifficultyById[MatchConfig.DefaultDifficulty]
+
+	local m = {
+		mode = opts.mode,
+		h2h = h2h,
+		ranked = opts.mode == "ranked",
+		modeLabel = h2h and (opts.mode == "ranked" and "RANKED" or "FRIENDLY") or difficulty.name,
+		humans = { user = a, cpu = b },
+		alive = true,
+		token = 0,
+		score = { user = 0, cpu = 0 },
+		drive = 1,
+		difficulty = difficulty,
+		tally = { user = {}, cpu = {} },
+		control = {},
+		av = {},
+		charConns = {},
+	}
+
+	-- squads
+	local cardsA, infosA = userSquad(profileA)
+	local jerseyA = jerseyOf(profileA)
+	local cardsB, infosB, teamB, primaryB, secondaryB, jerseyB
+	if h2h then
+		if profileB then
+			cardsB, infosB = userSquad(profileB)
+		else
+			local _ -- test bot: a CPU squad around A's rating
+			_, cardsB, infosB = cpuSquad(ratingsFor(cardsA).ovr)
+		end
+		jerseyB = jerseyOf(profileB)
+		primaryB, secondaryB = awayColors(jerseyA.primary, jerseyB.primary, jerseyB.secondary)
+		if primaryB ~= jerseyB.primary then
+			jerseyB = nil -- wearing away colors: no special jersey effects
+		end
+		teamB = humanTeamInfo(b, primaryB, secondaryB)
+	else
+		local cpuTeam
+		cpuTeam, cardsB, infosB = cpuSquad(math.clamp(ratingsFor(cardsA).ovr + difficulty.ovr, 50, 97))
+		primaryB, secondaryB = awayColors(jerseyA.primary, Color3.fromHex(cpuTeam.primary), Color3.fromHex(cpuTeam.secondary))
+		teamB = cpuTeam
+	end
+
+	local buildStart = os.clock()
+	local ok, err = pcall(function()
+		m.field = Field.new(Color3.fromRGB(16, 120, 80), primaryB, {
+			homeName = h2h and string.upper(a.DisplayName) or "GRIDIRON",
+			awayName = teamB.name,
+			screenText = "",
+			crowd = { jerseyA.secondary, jerseyA.primary, primaryB, secondaryB, Color3.fromRGB(240, 240, 245) },
+		})
+		m.user = buildTeam(m, cardsA, infosA, jerseyA.primary, jerseyA.secondary, jerseyA)
+		m.user.team = h2h and humanTeamInfo(a, jerseyA.primary, jerseyA.secondary) or { name = a.DisplayName, city = "", primary = jerseyA.primary:ToHex(), secondary = jerseyA.secondary:ToHex(), human = true }
+		m.user.confetti = jerseyA.secondary
+		m.cpu = buildTeam(m, cardsB, infosB, primaryB, secondaryB, jerseyB)
+		m.cpu.team = teamB
+		m.cpu.confetti = secondaryB
+		m.ball, m.ballTrail = makeBall()
+
+		for side, p in m.humans do
+			local char = p.Character
+			Npc.SetCollisionGroup(char)
+			local jersey = side == "user" and jerseyA or jerseyB
+			Npc.Equip(char, side == "user" and jerseyA.primary or primaryB, side == "user" and jerseyA.secondary or secondaryB, jersey)
+			matches[p] = m
+			if isPlayer(p) then
+				m.charConns[p] = p.CharacterAdded:Connect(function()
+					exitPlayer(m, p) -- died/respawned mid-game
+				end)
+			end
+		end
+		log(("%s: %s (%d) vs %s (%d), built in %.1fs"):format(m.modeLabel, teamName(m, "user"), m.user.ratings.ovr, teamName(m, "cpu"), m.cpu.ratings.ovr, os.clock() - buildStart))
+		startDrive(m, "user")
+	end)
+	if not ok then
+		warn("[Match] couldn't start:", err)
+		for _, p in { a, b } do
+			if p then
+				matches[p] = nil
+			end
+		end
+		pcall(destroyMatch, m)
+		return nil, err
+	end
+	return m
+end
+
+local function ready(player)
+	local profile = isPlayer(player) and PlayerData.Get(player)
+	local char = player.Character
+	return profile and CardDatabase.IsReady() and char and char:FindFirstChild("HumanoidRootPart")
+end
+
+function MatchService.InMatch(player)
+	return matches[player] ~= nil
+end
+
+-- Head-to-head between two players in this server (from H2HService). ranked: rating on the line.
+function MatchService.StartH2H(a, b, ranked)
+	if matches[a] or matches[b] then
+		return false, "A player is already in a game."
+	end
+	if not ready(a) or not (ready(b) or not isPlayer(b)) then
+		return false, "Still loading."
+	end
+	local m, err = createMatch({ mode = ranked and "ranked" or "friendly", a = a, b = b })
+	return m ~= nil, err
+end
+
+local function handleAction(player, action, arg)
+	local m = matches[player]
+	if not m or not m.alive then
+		return
+	end
+	local side = sideOf(m, player)
+	if not side then
+		return
+	end
+	local onOffense = side == m.possession
+	if action == "call" and onOffense and MatchConfig.PlaysById[arg] then
+		makeCall(m, "off", arg)
+	elseif action == "defcall" and not onOffense and MatchConfig.DefenseCallsById[arg] then
+		makeCall(m, "def", arg)
+	elseif action == "snap" and m.phase == "presnap" and (onOffense or not offHuman(m)) then
+		snap(m)
+	elseif action == "throw" and m.phase == "live" and type(arg) == "number" and onOffense then
+		userThrow(m, player, arg)
+	elseif action == "switch" and not onOffense and (m.phase == "presnap" or m.phase == "live" or m.phase == "calls") then
+		local now = os.clock()
+		if now - (m.lastSwitch or 0) < 0.4 then
+			return
+		end
+		m.lastSwitch = now
+		if m.phase == "live" then
+			-- jump to the AI defender nearest the ball
+			local ballPos = m.play.state == "air" and m.play.air.to or carrierPos(m)
+			local best, bestD
+			for slotId, unit in m.units.Defense do
+				if not unit.hidden and ballPos then
+					local d = hdist(unit:Position(), ballPos)
+					if not bestD or d < bestD then
+						best, bestD = slotId, d
+					end
+				end
+			end
+			if best then
+				switchControl(m, best)
+			end
+		else
+			-- before the snap: cycle through the defenders
+			local cycle = MatchConfig.ControlCycle
+			local i = table.find(cycle, m.controlSlot) or 0
+			switchControl(m, cycle[i % #cycle + 1])
+		end
+		sendState(m)
+	elseif action == "leave" then
+		exitPlayer(m, player)
+	end
+end
+
+-- Studio only: a scripted opponent for testing head-to-head with one player
+local function startTestBot(player)
+	local desc = Instance.new("HumanoidDescription")
+	local rig = Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15)
+	rig.Name = "TestBot"
+	rig:PivotTo(CFrame.new(0, 6, 30))
+	rig.Parent = workspace
+	rig.HumanoidRootPart:SetNetworkOwner(nil)
+	local bot = { DisplayName = "TEST BOT", Name = "TestBot", UserId = -1, Character = rig, Parent = workspace, isBot = true }
+	local okStart, err = MatchService.StartH2H(player, bot, false)
+	if not okStart then
+		rig:Destroy()
+		return { ok = false, err = err }
+	end
+	local m = matches[bot]
+	m.noRewards = true -- test games don't touch anyone's record
+	m.onDestroy = function()
+		rig:Destroy()
+	end
+	task.spawn(function()
+		local lastPhase
+		while m.alive and m.humans.cpu == bot do
+			task.wait(0.25)
+			local onOffense = m.possession == "cpu"
+			local hum = rig:FindFirstChildOfClass("Humanoid")
+			if m.phase == "final" then
+				task.wait(2)
+				handleAction(bot, "leave")
+				break
+			elseif m.phase == "calls" then
+				if onOffense and not m.call then
+					task.wait(1)
+					handleAction(bot, "call", cpuPlayCall(m).id)
+				elseif not onOffense and not m.defCall then
+					task.wait(1)
+					handleAction(bot, "defcall", aiDefCall())
+				end
+			elseif m.phase == "presnap" and onOffense and lastPhase ~= "presnap" then
+				task.wait(1.2)
+				handleAction(bot, "snap")
+			elseif m.phase == "live" and m.play then
+				if onOffense and m.play.state == "dropback" then
+					if os.clock() - m.play.t0 > 1.8 then
+						handleAction(bot, "throw", rng:NextInteger(1, 3))
+					end
+				elseif onOffense and m.play.state == "carry" and hum then
+					hum:MoveTo(rig.HumanoidRootPart.Position + m.field:Downfield() * 20)
+				elseif not onOffense and hum then
+					local target = m.play.state == "air" and m.play.air.to or carrierPos(m)
+					if target then
+						hum:MoveTo(target)
+					end
+				end
+			end
+			lastPhase = m.phase
+		end
+	end)
+	return { ok = true }
+end
+
 function MatchService.Start(remoteFolder)
 	remotes = remoteFolder
 
@@ -1666,139 +2204,33 @@ function MatchService.Start(remoteFolder)
 		if matches[player] then
 			return { ok = false, err = "You're already in a game." }
 		end
-		local profile = PlayerData.Get(player)
-		local char = player.Character
-		local root = char and char:FindFirstChild("HumanoidRootPart")
-		if not profile or not CardDatabase.IsReady() or not root then
+		if not ready(player) then
 			return { ok = false, err = "Still loading, try again in a moment." }
 		end
-
 		local difficulty = MatchConfig.DifficultyById[difficultyId] or MatchConfig.DifficultyById[MatchConfig.DefaultDifficulty]
 		PlayerData.Update(player, function(data)
 			data.difficulty = difficulty.id
 		end)
-		local userCards, userInfos = userSquad(profile)
-		local userOvr = ratingsFor(userCards).ovr
-		local cpuTeam, cpuCards, cpuInfos = cpuSquad(math.clamp(userOvr + difficulty.ovr, 50, 97))
-		local cpuPrimary = Color3.fromHex(cpuTeam.primary)
-		local cpuSecondary = Color3.fromHex(cpuTeam.secondary)
-		local jersey = Jerseys.Get(profile.data.jersey)
-		if not Jerseys.IsUnlocked(jersey.id, profile.data.stats.wins) then
-			jersey = Jerseys.Get(Jerseys.Default)
-		end
-		-- color clash with your jersey: the CPU wears its white away jersey
-		local function near(a, b)
-			return math.abs(a.R - b.R) + math.abs(a.G - b.G) + math.abs(a.B - b.B) < 0.45
-		end
-		if near(cpuPrimary, jersey.primary) then
-			cpuPrimary, cpuSecondary = Color3.fromRGB(236, 237, 242), cpuPrimary
-			if near(cpuPrimary, jersey.primary) then -- you're in white too
-				cpuPrimary, cpuSecondary = cpuSecondary, Color3.fromRGB(236, 237, 242)
-				cpuPrimary = cpuPrimary:Lerp(Color3.new(0, 0, 0), 0.35)
-			end
-		end
-
-		local m = {
-			player = player,
-			alive = true,
-			token = 0,
-			score = { you = 0, cpu = 0 },
-			drive = 1,
-			jersey = jersey,
-			difficulty = difficulty,
-			tally = {},
-		}
-		matches[player] = m
-		local buildStart = os.clock()
-		local ok, err = pcall(function()
-			m.field = Field.new(Color3.fromRGB(16, 120, 80), cpuPrimary, {
-				homeName = "GRIDIRON",
-				awayName = cpuTeam.name,
-				screenText = ("YOU 0  -  0 %s"):format(string.upper(cpuTeam.name)),
-				crowd = { jersey.secondary, jersey.primary, cpuPrimary, cpuSecondary, Color3.fromRGB(240, 240, 245) },
-			})
-			m.user = buildTeam(m, userCards, userInfos, jersey.primary, jersey.secondary, jersey)
-			m.cpu = buildTeam(m, cpuCards, cpuInfos, cpuPrimary, cpuSecondary)
-			m.cpu.team = cpuTeam
-			m.ball, m.ballTrail = makeBall()
-
-			Npc.SetCollisionGroup(char)
-			Npc.Equip(char, jersey.primary, jersey.secondary, jersey)
-			m.charConn = player.CharacterAdded:Connect(function()
-				cleanup(m) -- died/respawned mid-game: end it
-			end)
-
-			log(player.Name, "vs", cpuTeam.city, cpuTeam.name, "(" .. difficulty.name .. ")", "you", m.user.ratings.ovr, "cpu", m.cpu.ratings.ovr, ("built in %.1fs"):format(os.clock() - buildStart))
-			startDrive(m, "user")
-		end)
-		if not ok then
-			warn("[Match] couldn't start:", err)
-			pcall(cleanup, m)
-			matches[player] = nil
+		local m = createMatch({ mode = "cpu", a = player, difficulty = difficulty })
+		if not m then
 			return { ok = false, err = "Couldn't start the game, please try again." }
 		end
 		return { ok = true }
 	end
 
-	remotes.MatchAction.OnServerEvent:Connect(function(player, action, arg)
-		local m = matches[player]
-		if not m or not m.alive then
-			return
-		end
-		if action == "call" and m.phase == "playcall" and MatchConfig.PlaysById[arg] then
-			m.call = MatchConfig.PlaysById[arg]
-			m.defCall = weighted({ { "man", 60 }, { "zone", 25 }, { "blitz", 15 } })
-			m.play = { state = "presnap" }
-			m.phase = "presnap"
-			tagTargets(m)
-			sendState(m)
-		elseif action == "defcall" and m.phase == "defcall" and MatchConfig.DefenseCallsById[arg] then
-			m.defCall = arg
-			m.call = cpuPlayCall(m)
-			m.play = { state = "presnap" }
-			m.phase = "presnap"
-			sendState(m)
-		elseif action == "snap" and m.phase == "presnap" then
-			snap(m)
-		elseif action == "throw" and m.phase == "live" and type(arg) == "number" then
-			userThrow(m, arg)
-		elseif action == "switch" and m.possession == "cpu" and (m.phase == "presnap" or m.phase == "live" or m.phase == "defcall") then
-			local now = os.clock()
-			if now - (m.lastSwitch or 0) < 0.4 then
-				return
-			end
-			m.lastSwitch = now
-			if m.phase == "live" then
-				-- jump to the AI defender nearest the ball
-				local ballPos = m.play.state == "air" and m.play.air.to or carrierPos(m)
-				local best, bestD
-				for slotId, unit in m.units.Defense do
-					if not unit.hidden and ballPos then
-						local d = hdist(unit:Position(), ballPos)
-						if not bestD or d < bestD then
-							best, bestD = slotId, d
-						end
-					end
-				end
-				if best then
-					switchControl(m, best)
-				end
-			else
-				-- before the snap: cycle through the defenders
-				local cycle = MatchConfig.ControlCycle
-				local i = table.find(cycle, m.controlSlot) or 0
-				switchControl(m, cycle[i % #cycle + 1])
-			end
-			sendState(m)
-		elseif action == "leave" then
-			cleanup(m)
-		end
-	end)
+	remotes.MatchAction.OnServerEvent:Connect(handleAction)
+
+	if RunService:IsStudio() then
+		local dev = remotes:FindFirstChild("DevStartH2H") or Instance.new("RemoteFunction")
+		dev.Name = "DevStartH2H"
+		dev.Parent = remotes
+		dev.OnServerInvoke = startTestBot
+	end
 
 	Players.PlayerRemoving:Connect(function(player)
 		local m = matches[player]
 		if m then
-			cleanup(m)
+			exitPlayer(m, player)
 		end
 	end)
 end

@@ -1,4 +1,5 @@
--- LeaderboardService (server): wins leaderboards, this week and all time.
+-- LeaderboardService (server): wins leaderboards (this week, all time) and the ranked
+-- head-to-head rating leaderboard.
 -- OrderedDataStores keyed by UserId; the top 10 of each are fetched every 2 minutes, shared
 -- through the GetLeaderboard remote and shown on a big board in the lobby.
 
@@ -13,7 +14,7 @@ local LeaderboardService = {}
 
 local TOP = 10
 local REFRESH = 120
-local cache = { week = {}, allTime = {}, updatedAt = 0 }
+local cache = { week = {}, allTime = {}, ranked = {}, updatedAt = 0 }
 local names = {} -- [userId] = display name
 local board -- SurfaceGui frames in the lobby
 local remotes
@@ -22,6 +23,8 @@ local function store(kind)
 	local ok, s = pcall(function()
 		if kind == "week" then
 			return DataStoreService:GetOrderedDataStore("Wins_Week_" .. ChallengeConfig.Week())
+		elseif kind == "ranked" then
+			return DataStoreService:GetOrderedDataStore("H2H_Rating_v1")
 		end
 		return DataStoreService:GetOrderedDataStore("Wins_AllTime_v1")
 	end)
@@ -108,9 +111,10 @@ local function drawBoard()
 end
 
 function LeaderboardService.Refresh()
-	local week, all = fetch("week"), fetch("allTime")
+	local week, all, ranked = fetch("week"), fetch("allTime"), fetch("ranked")
 	cache.week = week or cache.week
 	cache.allTime = all or cache.allTime
+	cache.ranked = ranked or cache.ranked
 	cache.updatedAt = os.time()
 	cache.weekEndsAt = ChallengeConfig.WeekEnds(ChallengeConfig.Week())
 	drawBoard()
@@ -126,6 +130,16 @@ function LeaderboardService.RecordWin(player, totalWins)
 		local a = store("allTime")
 		if a then
 			pcall(a.SetAsync, a, tostring(player.UserId), totalWins)
+		end
+	end)
+end
+
+-- Ranked head-to-head: the player's current rating
+function LeaderboardService.RecordRating(player, rating)
+	task.spawn(function()
+		local r = store("ranked")
+		if r then
+			pcall(r.SetAsync, r, tostring(player.UserId), math.floor(rating))
 		end
 	end)
 end

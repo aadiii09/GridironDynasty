@@ -11,6 +11,7 @@ local PackConfig = require(ReplicatedStorage.Shared.PackConfig)
 local StoreConfig = require(ReplicatedStorage.Shared.StoreConfig)
 local LineupConfig = require(ReplicatedStorage.Shared.LineupConfig)
 local MatchConfig = require(ReplicatedStorage.Shared.MatchConfig)
+local RankConfig = require(ReplicatedStorage.Shared.RankConfig)
 local Assets = require(ReplicatedStorage.Shared.Assets)
 local Ratings = require(ReplicatedStorage.Shared.Ratings)
 local Jerseys = require(ReplicatedStorage.Shared.Jerseys)
@@ -184,14 +185,14 @@ local lockerBadge = UI.chip("1/16", C.BG, { TextColor3 = C.Accent, AnchorPoint =
 lockerBadge.Parent = lockerTile
 
 local playButton = UI.button({ kind = "primary", text = "PLAY", icon = "football", iconScale = 0.5, size = UDim2.fromOffset(270, 108), order = 5, textSize = 44, radius = 18 }, function()
-	openDifficulty()
+	openDifficulty("cpu")
 end)
 playButton.Parent = dock
 local playGlow = UI.stroke(C.Accent, 3, 0.2)
 playGlow.Parent = playButton
 TweenService:Create(playGlow, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Transparency = 0.85, Thickness = 7 }):Play()
 UI.shine(playButton, 3)
-UI.text({ Text = "VS AI  -  7v7  -  PICK YOUR DIFFICULTY", FontFace = F.Display, TextColor3 = Color3.fromRGB(8, 60, 34), TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 1, -22), ZIndex = 2 }).Parent = playButton
+UI.text({ Text = "VS CPU  -  RANKED  -  FRIENDLY", FontFace = F.Display, TextColor3 = Color3.fromRGB(8, 60, 34), TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 1, -22), ZIndex = 2 }).Parent = playButton
 
 -- shrink the dock on narrow (phone) screens
 local function fitDock()
@@ -1711,7 +1712,7 @@ function renderLeaderboard()
 	local tabs = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 44), LayoutOrder = 0, ZIndex = 12 }, {
 		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8) }),
 	})
-	for _, t in { { "week", "THIS WEEK" }, { "allTime", "ALL TIME" } } do
+	for _, t in { { "week", "THIS WEEK" }, { "allTime", "ALL TIME" }, { "ranked", "RANKED" } } do
 		UI.button({ kind = leaderboardTab == t[1] and "gold" or "dark", text = t[2], size = UDim2.fromOffset(150, 40), textSize = 16, z = 12 }, function()
 			leaderboardTab = t[1]
 			renderLeaderboard()
@@ -1721,15 +1722,15 @@ function renderLeaderboard()
 	local data = Remotes.GetLeaderboard:InvokeServer() or {}
 	local rows = data[leaderboardTab] or {}
 	if #rows == 0 then
-		UI.text({ Text = "No wins yet " .. (leaderboardTab == "week" and "this week" or "") .. " - win a game to claim the top spot!", FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 16, Size = UDim2.new(1, 0, 0, 30), LayoutOrder = 1, ZIndex = 12 }).Parent = leaderboardBody
+		UI.text({ Text = leaderboardTab == "ranked" and "No ranked games yet - play a RANKED game to get on the board!" or ("No wins yet " .. (leaderboardTab == "week" and "this week" or "") .. " - win a game to claim the top spot!"), FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 16, Size = UDim2.new(1, 0, 0, 30), LayoutOrder = 1, ZIndex = 12 }).Parent = leaderboardBody
 	end
 	local medal = { C.Gold, Color3.fromRGB(200, 205, 215), Color3.fromRGB(205, 127, 70) }
 	for i, r in rows do
 		local me = r.userId == player.UserId
 		local row = new("Frame", { BackgroundColor3 = me and Color3.fromRGB(20, 70, 50) or C.Panel2, BackgroundTransparency = 0.15, Size = UDim2.new(1, -10, 0, 48), LayoutOrder = i, ZIndex = 12 }, { UI.corner(10), UI.stroke(me and C.Accent or (medal[i] or C.Stroke), me and 2 or 1, medal[i] and 0.3 or 0) })
 		UI.text({ Text = tostring(r.rank), FontFace = F.Number, TextColor3 = medal[i] or C.Muted, TextScaled = false, TextSize = 26, Size = UDim2.fromOffset(50, 48), ZIndex = 13 }).Parent = row
-		UI.text({ Text = string.upper(r.name) .. (me and "  (YOU)" or ""), FontFace = F.Display, TextScaled = false, TextSize = 22, Size = UDim2.new(1, -220, 1, 0), Position = UDim2.fromOffset(60, 0), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 13 }).Parent = row
-		UI.text({ Text = UI.commas(r.wins) .. " W", FontFace = F.Number, TextColor3 = C.Accent, TextScaled = false, TextSize = 24, Size = UDim2.fromOffset(140, 48), Position = UDim2.new(1, -150, 0, 0), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 13 }).Parent = row
+		UI.text({ Text = string.upper(r.name) .. (me and "  (YOU)" or ""), FontFace = F.Display, TextScaled = false, TextSize = 22, Size = UDim2.new(1, -320, 1, 0), Position = UDim2.fromOffset(60, 0), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 13 }).Parent = row
+		UI.text({ Text = leaderboardTab == "ranked" and (RankConfig.Division(r.wins).name .. "  " .. UI.commas(r.wins)) or (UI.commas(r.wins) .. " W"), FontFace = F.Number, TextColor3 = C.Accent, TextScaled = false, TextSize = 24, Size = UDim2.fromOffset(240, 48), Position = UDim2.new(1, -250, 0, 0), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 13 }).Parent = row
 		row.Parent = leaderboardBody
 	end
 	local foot = leaderboardTab == "week" and ("RESETS IN " .. fmtDuration(math.max(0, (data.weekEndsAt or os.time()) - os.time())) .. "  -  UPDATES EVERY 2 MINUTES")
@@ -1738,32 +1739,66 @@ function renderLeaderboard()
 end
 
 -- =========================================================================================
--- Difficulty picker (PLAY)
+-- PLAY menu: VS CPU (difficulty) | RANKED (head-to-head queue) | FRIENDLY (challenge a player)
 -- =========================================================================================
-local diffModal = UI.glass({ Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(860, 400), ZIndex = 70 }, {
-	new("UIScale", { Name = "Fit" }),
-})
+local diffModal = UI.glass({ Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(860, 460), ZIndex = 70 })
 diffModal.Parent = gui
+local playTab = "cpu"
+local h2hState = { searching = false, count = 0, since = 0 }
 
-function openDifficulty()
-	diffModal:ClearAllChildren()
-	new("UIScale", { Name = "Fit", Scale = math.clamp((gui.AbsoluteSize.X - 24) / 880, 0.4, 1) }).Parent = diffModal
-	UI.corner(14).Parent = diffModal
-	UI.stroke(C.Accent, 2).Parent = diffModal
-	UI.text({ Text = "CHOOSE DIFFICULTY", FontFace = F.Display, TextScaled = false, TextSize = 36, Size = UDim2.new(1, 0, 0, 44), Position = UDim2.fromOffset(0, 14), ZIndex = 71 }).Parent = diffModal
+-- searching pill (top center) while you're in the ranked queue
+local searchPill = UI.glass({ Visible = false, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 66), Size = UDim2.fromOffset(330, 50), ZIndex = 60 })
+searchPill.Parent = gui
+searchPill:FindFirstChildOfClass("UIStroke").Color = C.Gold
+local searchText = UI.text({ Text = "", FontFace = F.Display, TextScaled = false, TextSize = 18, Size = UDim2.new(1, -120, 1, 0), Position = UDim2.fromOffset(16, 0), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 61 })
+searchText.Parent = searchPill
+
+local function setSearching(on, info)
+	h2hState.searching = on
+	if info then
+		h2hState.count = info.count or h2hState.count
+		h2hState.since = info.since or h2hState.since
+	end
+	searchPill.Visible = on
+end
+
+UI.button({ kind = "danger", text = "CANCEL", size = UDim2.fromOffset(96, 34), position = UDim2.new(1, -106, 0.5, -17), textSize = 14, z = 61 }, function()
+	Remotes.H2HQueue:InvokeServer("leave")
+	setSearching(false)
+	if diffModal.Visible and playTab == "ranked" then
+		openDifficulty("ranked")
+	end
+end).Parent = searchPill
+task.spawn(function()
+	while true do
+		task.wait(1)
+		if h2hState.searching then
+			local t = math.max(0, os.time() - (h2hState.since or os.time()))
+			searchText.Text = ("SEARCHING  %d:%02d  -  %d IN QUEUE"):format(t // 60, t % 60, h2hState.count or 1)
+		end
+	end
+end)
+
+local function divisionColor(name)
+	for _, d in RankConfig.Divisions do
+		if d.name == name then
+			return d.color
+		end
+	end
+	return C.Text
+end
+
+local function renderCpuTab(body)
 	local myOvr = teamRatings().ovr
-	UI.text({ Text = ("YOUR TEAM: %d OVR  -  EVERY WIN COUNTS FOR JERSEYS AND THE LEADERBOARD"):format(myOvr), FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 20), Position = UDim2.fromOffset(0, 60), ZIndex = 71 }).Parent = diffModal
-	UI.button({ kind = "dark", icon = "close", size = UDim2.fromOffset(44, 40), position = UDim2.new(1, -58, 0, 12), z = 72 }, function()
-		diffModal.Visible = false
-	end).Parent = diffModal
-	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -40, 0, 290), Position = UDim2.fromOffset(20, 96), ZIndex = 71 }, {
+	UI.text({ Text = ("YOUR TEAM: %d OVR  -  EVERY WIN COUNTS FOR JERSEYS AND THE LEADERBOARD"):format(myOvr), FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 20), Position = UDim2.fromOffset(0, 0), ZIndex = 71 }).Parent = body
+	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 290), Position = UDim2.fromOffset(0, 30), ZIndex = 71 }, {
 		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, Padding = UDim.new(0, 12) }),
 	})
-	row.Parent = diffModal
+	row.Parent = body
 	local last = state.difficulty or MatchConfig.DefaultDifficulty
 	for _, d in MatchConfig.Difficulties do
 		local sel = d.id == last
-		local card = new("TextButton", { AutoButtonColor = false, Text = "", BackgroundColor3 = C.Panel2, Size = UDim2.fromOffset(193, 284), LayoutOrder = d.order, ZIndex = 71 }, {
+		local card = new("TextButton", { Name = d.id .. "Card", AutoButtonColor = false, Text = "", BackgroundColor3 = C.Panel2, Size = UDim2.fromOffset(193, 284), LayoutOrder = d.order, ZIndex = 71 }, {
 			UI.corner(14),
 			UI.stroke(d.color, sel and 3 or 1, sel and 0 or 0.4),
 		})
@@ -1777,20 +1812,197 @@ function openDifficulty()
 		local vipMult = (state.store and state.store.vip) and 2 or 1
 		UI.text({ Text = "+" .. UI.commas(MatchConfig.RewardFor("Win", d.id) * vipMult), FontFace = F.Number, TextColor3 = C.Gold, TextScaled = false, TextSize = 30, Size = UDim2.new(1, 0, 0, 34), Position = UDim2.fromOffset(0, 164), ZIndex = 72 }).Parent = card
 		UI.text({ Text = ("COINS  -  x%s"):format(tostring(d.reward)), FontFace = F.Heavy, TextColor3 = C.Muted, TextScaled = false, TextSize = 12, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 198), ZIndex = 72 }).Parent = card
-		local go = UI.button({ kind = sel and "primary" or "dark", text = "PLAY", size = UDim2.new(1, -24, 0, 48), position = UDim2.new(0, 12, 1, -60), textSize = 20, z = 73 }, function()
+		UI.button({ kind = sel and "primary" or "dark", text = "PLAY", size = UDim2.new(1, -24, 0, 48), position = UDim2.new(0, 12, 1, -60), textSize = 20, z = 73 }, function()
 			diffModal.Visible = false
 			startMatch(d.id)
-		end)
-		go.Parent = card
+		end).Parent = card
 		card.Activated:Connect(function()
 			diffModal.Visible = false
 			startMatch(d.id)
 		end)
 		card.Parent = row
 	end
-	diffModal.Visible = true
-	UI.pop(diffModal, 0.25)
 end
+
+local function renderRankedTab(body, info)
+	local me = info and info.me or { rating = RankConfig.StartRating, wins = 0, losses = 0, ties = 0, division = "SILVER" }
+	local divColor = divisionColor(me.division)
+	local badge = new("Frame", { BackgroundColor3 = C.Panel2, Size = UDim2.fromOffset(300, 290), Position = UDim2.fromOffset(10, 20), ZIndex = 71 }, { UI.corner(14), UI.stroke(divColor, 2) })
+	badge.Parent = body
+	UI.text({ Text = "YOUR DIVISION", FontFace = F.Heavy, TextColor3 = C.Muted, TextScaled = false, TextSize = 13, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(0, 18), ZIndex = 72 }).Parent = badge
+	UI.icon("trophy", { Size = UDim2.fromOffset(96, 96), Position = UDim2.new(0.5, -48, 0, 44), ImageColor3 = divColor, ZIndex = 72 }).Parent = badge
+	UI.text({ Text = me.division, FontFace = F.Display, TextColor3 = divColor, TextScaled = false, TextSize = 40, Size = UDim2.new(1, 0, 0, 44), Position = UDim2.fromOffset(0, 146), ZIndex = 72 }).Parent = badge
+	UI.text({ Text = ("%d RATING"):format(me.rating), FontFace = F.Number, TextScaled = false, TextSize = 22, Size = UDim2.new(1, 0, 0, 26), Position = UDim2.fromOffset(0, 194), ZIndex = 72 }).Parent = badge
+	UI.text({ Text = ("%d W  -  %d L  -  %d T"):format(me.wins or 0, me.losses or 0, me.ties or 0), FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 15, Size = UDim2.new(1, 0, 0, 20), Position = UDim2.fromOffset(0, 232), ZIndex = 72 }).Parent = badge
+	local x = 336
+	UI.text({ Text = "RANKED HEAD-TO-HEAD", FontFace = F.Display, TextScaled = false, TextSize = 30, Size = UDim2.new(1, -x, 0, 36), Position = UDim2.fromOffset(x, 22), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 71 }).Parent = body
+	UI.text({
+		Text = "Play a live game against another player in this server. You call plays on offense and play a defender on defense, just like vs CPU, but the other team is a real person with their own lineup.\n\nWin to climb from Bronze to Dynasty. Win +"
+			.. RankConfig.Rewards.Win .. " Coins, tie +" .. RankConfig.Rewards.Tie .. ", loss +" .. RankConfig.Rewards.Loss .. ". Leaving a game counts as a loss.",
+		FontFace = F.Medium, TextColor3 = C.Muted, TextWrapped = true, TextScaled = false, TextSize = 15, Size = UDim2.new(1, -x - 20, 0, 140), Position = UDim2.fromOffset(x, 64), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 71,
+	}).Parent = body
+	local searching = h2hState.searching
+	UI.button({ kind = searching and "danger" or "gold", icon = searching and nil or "football", text = searching and "CANCEL SEARCH" or "FIND MATCH", size = UDim2.fromOffset(260, 60), position = UDim2.fromOffset(x, 214), textSize = 22, z = 72 }, function()
+		if h2hState.searching then
+			Remotes.H2HQueue:InvokeServer("leave")
+			setSearching(false)
+		else
+			local res = Remotes.H2HQueue:InvokeServer("join")
+			if res and res.ok then
+				setSearching(true, { count = res.count, since = os.time() })
+			else
+				toast(res and res.err or "Couldn't join the queue", C.Red)
+			end
+		end
+		openDifficulty("ranked")
+	end).Parent = body
+	local others = info and #info.players or 0
+	UI.text({
+		Text = searching and "Searching... you'll be matched with the closest-rated player who's looking."
+			or (others == 0 and "You're the only one in this server right now - invite a friend or try again soon." or (("%d other player%s in this server"):format(others, others == 1 and "" or "s"))),
+		FontFace = F.Bold, TextColor3 = searching and C.Gold or C.Muted, TextWrapped = true, TextScaled = false, TextSize = 13, Size = UDim2.new(1, -x - 20, 0, 34), Position = UDim2.fromOffset(x, 282), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 71,
+	}).Parent = body
+end
+
+local function renderFriendlyTab(body, info)
+	UI.text({ Text = "CHALLENGE A PLAYER IN THIS SERVER  -  UNRANKED, NO RATING ON THE LINE", FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 20), ZIndex = 71 }).Parent = body
+	local list = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 290), Position = UDim2.fromOffset(0, 28), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 4, ZIndex = 71 }, {
+		new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }),
+	})
+	list.Parent = body
+	local players = info and info.players or {}
+	if #players == 0 then
+		UI.text({ Text = "Nobody else is in this server yet. Invite a friend to Gridiron Dynasty and challenge them here!", FontFace = F.Medium, TextColor3 = C.Muted, TextWrapped = true, TextScaled = false, TextSize = 16, Size = UDim2.new(1, 0, 0, 60), ZIndex = 72 }).Parent = list
+	end
+	for i, p in players do
+		local row = new("Frame", { BackgroundColor3 = C.Panel2, Size = UDim2.new(1, -10, 0, 58), LayoutOrder = i, ZIndex = 72 }, { UI.corner(10) })
+		local head = new("ImageLabel", { BackgroundColor3 = C.BG, Size = UDim2.fromOffset(44, 44), Position = UDim2.fromOffset(8, 7), ZIndex = 73 }, { new("UICorner", { CornerRadius = UDim.new(1, 0) }) })
+		head.Parent = row
+		task.spawn(function()
+			local ok, img = pcall(Players.GetUserThumbnailAsync, Players, p.userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+			if ok then
+				head.Image = img
+			end
+		end)
+		UI.text({ Text = string.upper(p.name), FontFace = F.Display, TextScaled = false, TextSize = 22, Size = UDim2.new(1, -300, 0, 26), Position = UDim2.fromOffset(62, 6), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 73 }).Parent = row
+		UI.text({ Text = ("%s  -  %d"):format(p.division, p.rating), FontFace = F.Heavy, TextColor3 = divisionColor(p.division), TextScaled = false, TextSize = 13, Size = UDim2.new(1, -300, 0, 18), Position = UDim2.fromOffset(62, 32), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 73 }).Parent = row
+		if p.busy then
+			UI.text({ Text = "IN A GAME", FontFace = F.Heavy, TextColor3 = C.Muted, TextScaled = false, TextSize = 14, Size = UDim2.fromOffset(150, 20), Position = UDim2.new(1, -160, 0.5, -10), ZIndex = 73 }).Parent = row
+		else
+			UI.button({ kind = "primary", text = "CHALLENGE", size = UDim2.fromOffset(150, 40), position = UDim2.new(1, -160, 0.5, -20), textSize = 16, z = 73 }, function()
+				local res = Remotes.H2HChallenge:InvokeServer(p.userId)
+				if res and res.ok then
+					toast(("Challenge sent to %s - waiting for them to accept"):format(p.name), C.Accent)
+				else
+					toast(res and res.err or "Couldn't send the challenge", C.Red)
+				end
+			end).Parent = row
+		end
+		row.Parent = list
+	end
+end
+
+function openDifficulty(tab)
+	playTab = tab or playTab
+	diffModal:ClearAllChildren()
+	new("UIScale", { Name = "Fit", Scale = math.clamp(math.min((gui.AbsoluteSize.X - 24) / 880, (gui.AbsoluteSize.Y - 24) / 480), 0.4, 1) }).Parent = diffModal
+	UI.corner(14).Parent = diffModal
+	UI.stroke(C.Accent, 2).Parent = diffModal
+	UI.text({ Text = "PLAY", FontFace = F.Display, TextScaled = false, TextSize = 36, Size = UDim2.fromOffset(120, 44), Position = UDim2.fromOffset(24, 14), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 71 }).Parent = diffModal
+	local tabs = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(560, 44), Position = UDim2.fromOffset(130, 16), ZIndex = 71 }, {
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8) }),
+	})
+	tabs.Parent = diffModal
+	for _, t in { { "cpu", "VS CPU", "primary" }, { "ranked", "RANKED", "gold" }, { "friendly", "FRIENDLY", "blue" } } do
+		UI.button({ kind = playTab == t[1] and t[3] or "dark", text = t[2], size = UDim2.fromOffset(150, 42), textSize = 17, z = 72 }, function()
+			openDifficulty(t[1])
+		end).Parent = tabs
+	end
+	UI.button({ kind = "dark", icon = "close", size = UDim2.fromOffset(44, 40), position = UDim2.new(1, -58, 0, 14), z = 72 }, function()
+		diffModal.Visible = false
+	end).Parent = diffModal
+	local body = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -40, 0, 330), Position = UDim2.fromOffset(20, 84), ZIndex = 71 })
+	body.Parent = diffModal
+	diffModal.Visible = true
+	if playTab == "cpu" then
+		renderCpuTab(body)
+	else
+		local info = Remotes.GetH2HInfo:InvokeServer()
+		if not diffModal.Visible or body.Parent == nil then
+			return
+		end
+		if playTab == "ranked" then
+			renderRankedTab(body, info)
+		else
+			renderFriendlyTab(body, info)
+		end
+	end
+end
+
+-- incoming friendly challenge --------------------------------------------------------------
+local inviteModal = UI.glass({ Visible = false, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 130), Size = UDim2.fromOffset(440, 170), ZIndex = 85 })
+inviteModal.Parent = gui
+local currentInvite
+local function showInvite(ev)
+	currentInvite = ev.id
+	inviteModal:ClearAllChildren()
+	UI.corner(14).Parent = inviteModal
+	UI.stroke(C.Accent, 2).Parent = inviteModal
+	UI.text({ Text = string.upper(ev.from) .. " CHALLENGES YOU!", FontFace = F.Display, TextScaled = false, TextSize = 26, Size = UDim2.new(1, -20, 0, 32), Position = UDim2.fromOffset(10, 14), ZIndex = 86 }).Parent = inviteModal
+	UI.text({ Text = ("FRIENDLY HEAD-TO-HEAD  -  %s %d"):format(ev.info and ev.info.division or "", ev.info and ev.info.rating or 0), FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 14, Size = UDim2.new(1, -20, 0, 20), Position = UDim2.fromOffset(10, 50), ZIndex = 86 }).Parent = inviteModal
+	local timer = UI.text({ Text = "", FontFace = F.Bold, TextColor3 = C.Gold, TextScaled = false, TextSize = 13, Size = UDim2.new(1, -20, 0, 18), Position = UDim2.fromOffset(10, 72), ZIndex = 86 })
+	timer.Parent = inviteModal
+	local function answer(accept)
+		inviteModal.Visible = false
+		local id = currentInvite
+		currentInvite = nil
+		local res = Remotes.H2HRespond:InvokeServer(id, accept)
+		if accept and not (res and res.ok) then
+			toast(res and res.err or "Couldn't start the game", C.Red)
+		end
+	end
+	UI.button({ kind = "primary", text = "ACCEPT", size = UDim2.fromOffset(190, 50), position = UDim2.fromOffset(20, 104), textSize = 20, z = 86 }, function()
+		closePanels()
+		diffModal.Visible = false
+		answer(true)
+	end).Parent = inviteModal
+	UI.button({ kind = "dark", text = "DECLINE", size = UDim2.fromOffset(190, 50), position = UDim2.fromOffset(230, 104), textSize = 20, z = 86 }, function()
+		answer(false)
+	end).Parent = inviteModal
+	inviteModal.Visible = true
+	UI.pop(inviteModal, 0.3)
+	Sounds.Play("whistle", 0.6)
+	task.spawn(function()
+		while currentInvite == ev.id and inviteModal.Visible do
+			timer.Text = ("EXPIRES IN %ds"):format(math.max(0, (ev.expiresAt or os.time()) - os.time()))
+			task.wait(0.5)
+		end
+	end)
+end
+
+Remotes:WaitForChild("H2HEvent").OnClientEvent:Connect(function(ev)
+	if ev.type == "queue" then
+		setSearching(ev.searching, ev)
+	elseif ev.type == "invite" then
+		showInvite(ev)
+	elseif ev.type == "inviteCancelled" then
+		if currentInvite == ev.id then
+			currentInvite = nil
+			inviteModal.Visible = false
+		end
+	elseif ev.type == "declined" then
+		toast(("%s %s your challenge"):format(ev.name, ev.reason or "declined"), C.Gold)
+	elseif ev.type == "matched" then
+		setSearching(false)
+		diffModal.Visible = false
+		inviteModal.Visible = false
+		closePanels()
+		toast((ev.ranked and "RANKED GAME vs %s" or "FRIENDLY GAME vs %s"):format(string.upper(ev.opponent)), C.Accent)
+	elseif ev.type == "error" then
+		setSearching(false)
+		toast(ev.err or "Something went wrong", C.Red)
+	end
+end)
 
 -- =========================================================================================
 -- Play

@@ -158,6 +158,22 @@ UI.button({ kind = "primary", text = "BACK TO LOBBY", size = UDim2.new(1, -60, 0
 	MatchAction:FireServer("leave")
 end).Parent = finalPanel
 
+-- play clock (head-to-head): seconds left to call / snap ------------------------------------
+local clockLabel = UI.text({ Name = "PlayClock", Text = "", FontFace = F.Number, TextScaled = false, TextSize = 30, TextStrokeTransparency = 0.4, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 232), Size = UDim2.fromOffset(120, 34), Visible = false })
+clockLabel.Parent = gui
+RunService.Heartbeat:Connect(function()
+	local s = state
+	local ends = s and s.clockEndsAt
+	if not ends or (s.phase ~= "playcall" and s.phase ~= "defcall" and s.phase ~= "waiting" and s.phase ~= "presnap") then
+		clockLabel.Visible = false
+		return
+	end
+	local left = math.max(0, math.ceil(ends - workspace:GetServerTimeNow()))
+	clockLabel.Visible = true
+	clockLabel.Text = ":" .. string.format("%02d", left)
+	clockLabel.TextColor3 = left <= 5 and C.Red or C.Text
+end)
+
 -- callouts: floating text over a player when a rating wins a play ----------------------------
 function showCallout(model, text, colorHex)
 	local head = model and model:FindFirstChild("Head")
@@ -190,43 +206,61 @@ end
 local DEFENDER_SLOTS = { CB1 = true, CB2 = true, LB1 = true, LB2 = true, S = true, DL1 = true, DL2 = true }
 RunService.RenderStepped:Connect(function()
 	local s = state
-	if not s or s.possession ~= "user" or s.phase ~= "live" or s.playState ~= "dropback" or not s.ball or not s.ball.Parent then
+	if not s or not s.ball or not s.ball.Parent then
 		return
 	end
 	local field = s.ball.Parent
-	local defs = {}
+	-- the offense's target rings are only for the offense
+	if s.possession ~= "user" then
+		for _, m in field:GetChildren() do
+			local ring = m:IsA("Model") and m:FindFirstChild("TargetRing")
+			if ring then
+				ring.LocalTransparencyModifier = 1
+			end
+		end
+		return
+	end
+	if s.phase ~= "live" or s.playState ~= "dropback" then
+		return
+	end
+	local defs, rings = {}, {}
 	for _, m in field:GetChildren() do
-		if DEFENDER_SLOTS[m.Name] and m:IsA("Model") then
-			local root, head = m:FindFirstChild("HumanoidRootPart"), m:FindFirstChild("Head")
-			if root and head and head.Transparency < 1 then
-				table.insert(defs, root.Position)
+		if m:IsA("Model") then
+			if DEFENDER_SLOTS[m.Name] then
+				local root, head = m:FindFirstChild("HumanoidRootPart"), m:FindFirstChild("Head")
+				if root and head and head.Transparency < 1 then
+					table.insert(defs, root.Position)
+				end
+			end
+			local ring = m:FindFirstChild("TargetRing")
+			if ring then
+				table.insert(rings, ring)
 			end
 		end
 	end
-	for _, ring in field:GetDescendants() do
-		if ring.Name == "TargetRing" then
-			local rcv = ring.Parent
-			local root = rcv and rcv:FindFirstChild("HumanoidRootPart")
-			if root then
-				local sep = math.huge
-				for _, d in defs do
-					sep = math.min(sep, (Vector3.new(d.X, 0, d.Z) - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude)
-				end
-				local color, word
-				if sep >= 7 then
-					color, word = C.Accent, "OPEN"
-				elseif sep >= 3.5 then
-					color, word = C.Gold, "TIGHT"
-				else
-					color, word = C.Red, "COVERED"
-				end
-				ring.Color = color
-				local chip = openChips[rcv]
-				if chip then
-					chip.BackgroundColor3 = color
-					chip.Text = word
-					chip.TextColor3 = C.BG
-				end
+	for _, ring in rings do
+		ring.LocalTransparencyModifier = 0
+		local rcv = ring.Parent
+		local root = rcv and rcv:FindFirstChild("HumanoidRootPart")
+		if root then
+			local sep = math.huge
+			for _, d in defs do
+				sep = math.min(sep, (Vector3.new(d.X, 0, d.Z) - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude)
+			end
+			local color, word
+			if sep >= 7 then
+				color, word = C.Accent, "OPEN"
+			elseif sep >= 3.5 then
+				color, word = C.Gold, "TIGHT"
+			else
+				color, word = C.Red, "COVERED"
+			end
+			ring.Color = color
+			local chip = openChips[rcv]
+			if chip then
+				chip.BackgroundColor3 = color
+				chip.Text = word
+				chip.TextColor3 = C.BG
 			end
 		end
 	end
@@ -248,11 +282,17 @@ local function render()
 	cpuBox.name.Text = string.upper(s.opponent.name)
 	cpuBox.score.Text = tostring(s.cpu)
 	cpuBox.box.BackgroundColor3 = Color3.fromHex(s.opponent.primary):Lerp(Color3.new(0, 0, 0), 0.35)
-	cpuBox.logo.Image = Assets.Logo(s.opponent.id)
+	if s.opponent.human then
+		cpuBox.logo.Image = Assets.icon_football
+		cpuBox.logo.ImageColor3 = Color3.fromHex(s.opponent.secondary)
+	else
+		cpuBox.logo.Image = Assets.Logo(s.opponent.id)
+		cpuBox.logo.ImageColor3 = Color3.new(1, 1, 1)
+	end
 	youBox.ball.Visible = userBall
 	cpuBox.ball.Visible = not userBall
 	local ordinal = ({ "1st", "2nd", "3rd", "4th" })[s.down] or (s.down .. "th")
-	situation.Text = ("%s & %s   |   %s   |   DRIVE %d/%d"):format(ordinal, s.toGo, s.spot, math.min(s.drive, s.drives), s.drives)
+	situation.Text = ("%s & %s   |   %s   |   DRIVE %d/%d%s"):format(ordinal, s.toGo, s.spot, math.min(s.drive, s.drives), s.drives, (s.mode == "ranked" or s.mode == "friendly") and ("   |   " .. s.difficulty) or "")
 	if s.phase == "final" then
 		situation.Text = ("FINAL   |   %s   |   TEAM RATING  %d vs %d"):format(s.difficulty or "", s.ratings.you.ovr, s.ratings.cpu.ovr)
 	end
@@ -277,6 +317,11 @@ local function render()
 				MatchAction:FireServer("defcall", call.id)
 			end).Parent = controls
 		end
+		switchButton().Parent = controls
+	elseif s.phase == "waiting" then
+		hint.Text = ("Waiting for %s to call..."):format(s.opponent.name)
+	elseif s.phase == "presnap" and not userBall and not s.canSnap then
+		hint.Text = ("You're the %s %s  -  %s snaps the ball  -  Q to switch"):format(s.control and s.control.pos or "", s.control and s.control.name or "", s.opponent.name)
 		switchButton().Parent = controls
 	elseif s.phase == "presnap" and not userBall then
 		hint.Text = ("You're the %s %s  -  Space when ready, Q to switch"):format(s.control and s.control.pos or "", s.control and s.control.name or "")
@@ -328,7 +373,15 @@ local function render()
 		finalScore.Text = ("YOU %d  -  %d %s"):format(s.you, s.cpu, string.upper(s.opponent.name))
 		finalCoins.Text = ("+%d COINS%s"):format(s.final.coins, s.final.difficulty and ("  -  %s x%s"):format(s.final.difficulty, tostring(s.final.multiplier)) or "")
 		local unlocked = s.final.unlocked or {}
-		finalUnlock.Text = #unlocked > 0 and ("NEW JERSEY UNLOCKED: " .. string.upper(table.concat(unlocked, ", ")) .. "  -  equip it in the Locker") or ""
+		local lines = {}
+		if s.final.rating then
+			local r = s.final.rating
+			table.insert(lines, ("RATING %d -> %d (%+d)  -  %s"):format(r.old, r.new, r.new - r.old, r.division))
+		end
+		if #unlocked > 0 then
+			table.insert(lines, "NEW JERSEY UNLOCKED: " .. string.upper(table.concat(unlocked, ", ")))
+		end
+		finalUnlock.Text = table.concat(lines, "   |   ")
 	end
 end
 
