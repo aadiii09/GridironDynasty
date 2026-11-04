@@ -10,6 +10,7 @@ local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local PackConfig = require(ReplicatedStorage.Shared.PackConfig)
 local StoreConfig = require(ReplicatedStorage.Shared.StoreConfig)
 local LineupConfig = require(ReplicatedStorage.Shared.LineupConfig)
+local MatchConfig = require(ReplicatedStorage.Shared.MatchConfig)
 local Assets = require(ReplicatedStorage.Shared.Assets)
 local Ratings = require(ReplicatedStorage.Shared.Ratings)
 local Jerseys = require(ReplicatedStorage.Shared.Jerseys)
@@ -44,7 +45,9 @@ end
 local function fmtDuration(sec)
 	sec = math.max(0, math.floor(sec))
 	local h, m = math.floor(sec / 3600), math.floor(sec % 3600 / 60)
-	if h > 0 then
+	if h >= 48 then
+		return string.format("%dd %dh", math.floor(h / 24), h % 24)
+	elseif h > 0 then
 		return string.format("%dh %dm", h, m)
 	end
 	return string.format("%dm %ds", m, sec % 60)
@@ -154,8 +157,8 @@ local function tile(iconName, label, color, color2, order, onClick)
 end
 
 -- forward declarations
-local openPanel, closePanels, renderShop, renderCollection, renderLineup, renderLocker, startMatch
-local shopPanel, collectionPanel, lineupPanel, lockerPanel
+local openPanel, closePanels, renderShop, renderCollection, renderLineup, renderLocker, startMatch, openDifficulty
+local shopPanel, collectionPanel, lineupPanel, lockerPanel, challengesPanel, leaderboardPanel
 
 local packsTile = tile("packs", "STORE", Color3.fromRGB(190, 70, 255), Color3.fromRGB(255, 60, 140), 1, function()
 	openStore("PACKS")
@@ -181,14 +184,14 @@ local lockerBadge = UI.chip("1/16", C.BG, { TextColor3 = C.Accent, AnchorPoint =
 lockerBadge.Parent = lockerTile
 
 local playButton = UI.button({ kind = "primary", text = "PLAY", icon = "football", iconScale = 0.5, size = UDim2.fromOffset(270, 108), order = 5, textSize = 44, radius = 18 }, function()
-	startMatch()
+	openDifficulty()
 end)
 playButton.Parent = dock
 local playGlow = UI.stroke(C.Accent, 3, 0.2)
 playGlow.Parent = playButton
 TweenService:Create(playGlow, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Transparency = 0.85, Thickness = 7 }):Play()
 UI.shine(playButton, 3)
-UI.text({ Text = "VS AI  -  7v7  -  WIN 400 COINS", FontFace = F.Display, TextColor3 = Color3.fromRGB(8, 60, 34), TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 1, -22), ZIndex = 2 }).Parent = playButton
+UI.text({ Text = "VS AI  -  7v7  -  PICK YOUR DIFFICULTY", FontFace = F.Display, TextColor3 = Color3.fromRGB(8, 60, 34), TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 1, -22), ZIndex = 2 }).Parent = playButton
 
 -- shrink the dock on narrow (phone) screens
 local function fitDock()
@@ -276,11 +279,13 @@ function openPanel(panel)
 	end
 end
 
-local shopBody, collectionBody, oddsBody, lineupBody, lockerBody
+local shopBody, collectionBody, oddsBody, lineupBody, lockerBody, challengesBody, leaderboardBody
 shopPanel, shopBody = makePanel("Shop", "STORE", "packs", Color3.fromRGB(220, 70, 220))
 collectionPanel, collectionBody = makePanel("Collection", "COLLECTION", "collection", C.Blue)
 lineupPanel, lineupBody = makePanel("Lineup", "LINEUP", "lineup", C.Gold)
 lockerPanel, lockerBody = makePanel("Locker", "LOCKER", "jersey", C.Accent)
+challengesPanel, challengesBody = makePanel("Challenges", "CHALLENGES", "trophy", C.Accent)
+leaderboardPanel, leaderboardBody = makePanel("Leaderboard", "LEADERBOARD", "trophy", C.Gold)
 local oddsPanel
 oddsPanel, oddsBody = makePanel("Odds", "PACK ODDS", "packs", C.Purple)
 
@@ -1035,6 +1040,21 @@ local function openPicker(slot)
 		face.LayoutOrder = i
 		face.ZIndex = 42
 		local inSlot = lineupSlotOf(opt.entry.uid)
+		-- how many other starters share his team (adding him makes it +1)
+		local mates = 0
+		for _, other in LineupConfig.Slots do
+			if other.id ~= slot.id then
+				local e = cardByUid(state.lineup[other.id])
+				local c = e and CardData.Get(e.id)
+				if c and c.team == opt.d.card.team and c.pid ~= opt.d.card.pid then
+					mates += 1
+				end
+			end
+		end
+		if mates >= 1 and not inSlot then
+			local boost = LineupConfig.ChemBoost(mates + 1)
+			UI.chip(("%s x%d%s"):format(opt.d.card.team, mates + 1, boost > 0 and (" +" .. boost .. " CHEM") or ""), boost > 0 and C.Accent or C.Panel2, { TextColor3 = boost > 0 and C.BG or C.Text, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -4), ZIndex = 60 }).Parent = face
+		end
 		if inSlot then
 			UI.chip(inSlot == slot.id and "IN THIS SLOT" or ("STARTING: " .. inSlot), inSlot == slot.id and C.Accent or C.Gold, { TextColor3 = C.BG, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.48), ZIndex = 60 }).Parent = face
 		end
@@ -1084,8 +1104,27 @@ function renderLineup()
 		end
 	end).Parent = header
 
+	-- team chemistry: 3+ starters from one team boost each other
+	local chemRow = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 30), LayoutOrder = 2, ZIndex = 12 }, {
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }),
+	})
+	chemRow.Parent = lineupBody
+	UI.text({ Text = "CHEMISTRY", FontFace = F.Display, TextColor3 = C.Accent, TextScaled = false, TextSize = 20, Size = UDim2.fromOffset(104, 26), LayoutOrder = 0, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 12 }).Parent = chemRow
+	local shown = 0
+	for i, g in ratings.chem.groups do
+		local team = CardData.Team(g.team) or {}
+		local color = team.primary and Color3.fromHex(team.primary) or C.Panel2
+		local label = ("%s x%d%s"):format(g.team, g.count, g.boost > 0 and ("  +" .. g.boost) or "")
+		UI.chip(label, g.boost > 0 and color or C.Panel2, { TextColor3 = Color3.new(1, 1, 1), LayoutOrder = i, ZIndex = 12 }).Parent = chemRow
+		shown += 1
+	end
+	UI.text({
+		Text = shown == 0 and "Start 3+ players from the same team: +1 to their ratings at 3, +2 at 5, +3 at 7" or "+1 at 3 from a team, +2 at 5, +3 at 7",
+		FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 13, Size = UDim2.fromOffset(520, 20), LayoutOrder = 99, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 12,
+	}).Parent = chemRow
+
 	-- field with mowed stripes
-	local field = new("Frame", { BackgroundColor3 = Color3.fromRGB(40, 120, 56), Size = UDim2.new(1, 0, 0, 480), LayoutOrder = 2, ZIndex = 12, ClipsDescendants = true }, { UI.corner(14), UI.stroke(Color3.fromRGB(240, 240, 240), 2, 0.4) })
+	local field = new("Frame", { BackgroundColor3 = Color3.fromRGB(40, 120, 56), Size = UDim2.new(1, 0, 0, 480), LayoutOrder = 3, ZIndex = 12, ClipsDescendants = true }, { UI.corner(14), UI.stroke(Color3.fromRGB(240, 240, 240), 2, 0.4) })
 	field.Parent = lineupBody
 	for i = 0, 9 do
 		new("Frame", { BackgroundColor3 = i % 2 == 0 and Color3.fromRGB(48, 136, 64) or Color3.fromRGB(40, 120, 56), BorderSizePixel = 0, Size = UDim2.new(1, 0, 0.1, 0), Position = UDim2.fromScale(0, i / 10), ZIndex = 12 }).Parent = field
@@ -1104,6 +1143,10 @@ function renderLineup()
 				face.Size = UDim2.fromScale(1, 1)
 				face.ZIndex = 15
 				face.Parent = holder
+				local boost = ratings.chem.boost[slot.id] or 0
+				if boost > 0 then
+					UI.chip(("+%d CHEM"):format(boost), C.Accent, { TextColor3 = C.BG, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 1, 2), ZIndex = 25 }).Parent = holder
+				end
 			else
 				new("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.5, Size = UDim2.fromScale(1, 1), ZIndex = 15 }, {
 					UI.corner(12),
@@ -1395,6 +1438,14 @@ end
 local function fitHub()
 	local w = gui.AbsoluteSize.X
 	featured.Size = UDim2.fromOffset(math.min(500, w - 32), 230)
+	local cw = hud:FindFirstChild("ChallengeWidget")
+	if cw then
+		-- short screens: collapse to the header row so it never covers the dock
+		local dockTop = gui.AbsoluteSize.Y - 18 - 110 * dock.Fit.Scale
+		local full = cw.Position.Y.Offset + 182 + 12 <= dockTop
+		cw.ClipsDescendants = not full
+		cw.Size = UDim2.fromOffset(math.min(500, w - 32), full and 182 or 46)
+	end
 	showcase.Visible = w >= 980 and not backdrop.Visible
 end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitHub)
@@ -1470,10 +1521,282 @@ Remotes:WaitForChild("CoinsPurchased").OnClientEvent:Connect(function(info)
 end)
 
 -- =========================================================================================
+-- Challenges (daily + weekly) and leaderboards
+-- =========================================================================================
+local challengeState -- snapshot from the server
+local renderChallenges, renderLeaderboard -- panels (below)
+
+local function claimChallenge(kind, id)
+	local res = Remotes.ClaimChallenge:InvokeServer(kind, id)
+	if not res or not res.ok then
+		toast(res and res.err or "Couldn't claim", C.Red)
+		return
+	end
+	if res.given and res.given.coins then
+		coinBurst(8)
+		toast(("+%s Coins"):format(UI.commas(res.given.coins)), C.Gold)
+	end
+	-- pack rewards open with the normal reveal (PackOpened)
+end
+
+local function rewardChip(reward, z)
+	local isPack = reward.pack ~= nil
+	return UI.chip(isPack and (string.upper(reward.pack) .. " PACK") or ("+" .. UI.commas(reward.coins)), isPack and C.Purple or C.Gold, { TextColor3 = isPack and C.Text or C.BG, ZIndex = z })
+end
+
+-- hub widget: today's three challenges under the promo carousel
+local challengeWidget = UI.glass({ Name = "ChallengeWidget", Position = UDim2.fromOffset(16, 404), Size = UDim2.fromOffset(500, 182) })
+challengeWidget.Parent = hud
+table.insert(hubOnly, challengeWidget)
+local function placeWidget()
+	challengeWidget.Position = UDim2.fromOffset(16, featured:GetAttribute("Dismissed") and 214 or 404)
+	fitHub()
+end
+featured:GetAttributeChangedSignal("Dismissed"):Connect(placeWidget)
+
+local function renderWidget()
+	challengeWidget:ClearAllChildren()
+	UI.corner(14).Parent = challengeWidget
+	UI.stroke(C.Stroke, 1).Parent = challengeWidget
+	local snap = challengeState
+	UI.text({ Text = "DAILY CHALLENGES", FontFace = F.Display, TextScaled = false, TextSize = 22, Size = UDim2.fromOffset(220, 26), Position = UDim2.fromOffset(16, 10), TextXAlignment = Enum.TextXAlignment.Left }).Parent = challengeWidget
+	local timer = UI.text({ Name = "Timer", Text = "", FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 12, Size = UDim2.fromOffset(140, 16), Position = UDim2.fromOffset(196, 16), TextXAlignment = Enum.TextXAlignment.Left })
+	timer.Parent = challengeWidget
+	UI.button({ kind = "dark", text = "ALL", size = UDim2.fromOffset(64, 30), position = UDim2.new(1, -150, 0, 8), textSize = 13 }, function()
+		openPanel(challengesPanel)
+		renderChallenges()
+	end).Parent = challengeWidget
+	UI.button({ kind = "gold", icon = "trophy", text = "RANKS", size = UDim2.fromOffset(78, 30), position = UDim2.new(1, -82, 0, 8), textSize = 13 }, function()
+		openPanel(leaderboardPanel)
+		renderLeaderboard()
+	end).Parent = challengeWidget
+	if not snap then
+		return
+	end
+	timer.Text = "RESETS IN " .. fmtDuration(math.max(0, snap.daily.endsAt - os.time()))
+	for i, ch in snap.daily.list do
+		local y = 46 + (i - 1) * 43
+		local row = new("Frame", { BackgroundColor3 = C.Panel2, BackgroundTransparency = ch.claimed and 0.6 or 0.2, Size = UDim2.new(1, -24, 0, 38), Position = UDim2.fromOffset(12, y) }, { UI.corner(8) })
+		UI.text({ Text = ch.text, FontFace = F.Bold, TextColor3 = ch.claimed and C.Muted or C.Text, TextScaled = false, TextSize = 14, Size = UDim2.new(1, -190, 0, 18), Position = UDim2.fromOffset(10, 4), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd }).Parent = row
+		local track = new("Frame", { BackgroundColor3 = C.BG, Size = UDim2.new(1, -190, 0, 5), Position = UDim2.fromOffset(10, 26) }, { UI.corner(3) })
+		new("Frame", { BackgroundColor3 = ch.complete and C.Accent or C.Blue, Size = UDim2.fromScale(math.max(0.02, ch.progress / ch.target), 1) }, { UI.corner(3) }).Parent = track
+		track.Parent = row
+		local reward = rewardChip(ch.reward, 2)
+		reward.AnchorPoint = Vector2.new(1, 0.5)
+		reward.Position = UDim2.new(1, -96, 0.5, 0)
+		reward.Parent = row
+		if ch.claimed then
+			UI.text({ Text = "CLAIMED", FontFace = F.Heavy, TextColor3 = C.Accent, TextScaled = false, TextSize = 12, Size = UDim2.fromOffset(80, 18), Position = UDim2.new(1, -88, 0.5, -9) }).Parent = row
+		elseif ch.complete then
+			local b = UI.button({ kind = "primary", text = "CLAIM", size = UDim2.fromOffset(80, 30), position = UDim2.new(1, -86, 0.5, -15), textSize = 14 }, function()
+				claimChallenge("challenge", ch.id)
+			end)
+			b.Parent = row
+			UI.shine(b, 2)
+		else
+			UI.text({ Text = ("%s / %s"):format(UI.commas(ch.progress), UI.commas(ch.target)), FontFace = F.Number, TextColor3 = C.Muted, TextScaled = false, TextSize = 15, Size = UDim2.fromOffset(80, 18), Position = UDim2.new(1, -88, 0.5, -9) }).Parent = row
+		end
+		row.Parent = challengeWidget
+	end
+end
+
+-- full panel: daily + weekly + bonus packs
+function renderChallenges()
+	challengesBody:ClearAllChildren()
+	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }).Parent = challengesBody
+	local snap = challengeState
+	if not snap then
+		UI.text({ Text = "Loading...", TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 30), ZIndex = 12 }).Parent = challengesBody
+		return
+	end
+	local order = 0
+	local function nextOrder()
+		order += 1
+		return order
+	end
+	for _, set in { { key = "daily", title = "DAILY CHALLENGES", bonusKind = "dailyBonus", color = C.Accent }, { key = "weekly", title = "WEEKLY CHALLENGES", bonusKind = "weeklyBonus", color = C.Gold } } do
+		local data = snap[set.key]
+		local head = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -10, 0, 40), LayoutOrder = nextOrder(), ZIndex = 12 })
+		UI.text({ Text = set.title, FontFace = F.Display, TextColor3 = set.color, TextScaled = false, TextSize = 28, Size = UDim2.fromOffset(360, 34), Position = UDim2.fromOffset(4, 4), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 12 }).Parent = head
+		UI.text({ Text = "RESETS IN " .. fmtDuration(math.max(0, data.endsAt - os.time())), FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 14, Size = UDim2.fromOffset(240, 20), Position = UDim2.new(1, -244, 0, 12), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 12 }).Parent = head
+		head.Parent = challengesBody
+		for _, ch in data.list do
+			local row = new("Frame", { BackgroundColor3 = C.Panel2, BackgroundTransparency = ch.claimed and 0.6 or 0.15, Size = UDim2.new(1, -10, 0, 62), LayoutOrder = nextOrder(), ZIndex = 12 }, { UI.corner(10), UI.stroke(ch.complete and not ch.claimed and C.Accent or C.Stroke, 1) })
+			UI.text({ Text = ch.text, FontFace = F.Bold, TextColor3 = ch.claimed and C.Muted or C.Text, TextScaled = false, TextSize = 18, Size = UDim2.new(1, -330, 0, 24), Position = UDim2.fromOffset(16, 8), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 13 }).Parent = row
+			local track = new("Frame", { BackgroundColor3 = C.BG, Size = UDim2.new(1, -330, 0, 8), Position = UDim2.fromOffset(16, 40), ZIndex = 13 }, { UI.corner(4) })
+			new("Frame", { BackgroundColor3 = ch.complete and C.Accent or C.Blue, Size = UDim2.fromScale(math.max(0.02, ch.progress / ch.target), 1), ZIndex = 14 }, { UI.corner(4) }).Parent = track
+			track.Parent = row
+			UI.text({ Text = ("%s / %s"):format(UI.commas(ch.progress), UI.commas(ch.target)), FontFace = F.Number, TextColor3 = C.Muted, TextScaled = false, TextSize = 18, Size = UDim2.fromOffset(110, 22), Position = UDim2.new(1, -306, 0.5, -11), ZIndex = 13 }).Parent = row
+			local reward = rewardChip(ch.reward, 13)
+			reward.AnchorPoint = Vector2.new(1, 0.5)
+			reward.Position = UDim2.new(1, -130, 0.5, 0)
+			reward.Parent = row
+			if ch.claimed then
+				UI.text({ Text = "CLAIMED", FontFace = F.Heavy, TextColor3 = C.Accent, TextScaled = false, TextSize = 14, Size = UDim2.fromOffset(106, 20), Position = UDim2.new(1, -116, 0.5, -10), ZIndex = 13 }).Parent = row
+			else
+				UI.button({ kind = ch.complete and "primary" or "disabled", text = "CLAIM", size = UDim2.fromOffset(106, 40), position = UDim2.new(1, -116, 0.5, -20), textSize = 16, z = 13 }, function()
+					if ch.complete then
+						claimChallenge("challenge", ch.id)
+					end
+				end).Parent = row
+			end
+			row.Parent = challengesBody
+		end
+		-- bonus for finishing the whole set
+		local bonus = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.new(1, -10, 0, 56), LayoutOrder = nextOrder(), ZIndex = 12 }, { UI.corner(10) })
+		UI.flowGradient(bonus, set.color:Lerp(C.BG, 0.55), C.Panel2, set.color:Lerp(C.BG, 0.7))
+		UI.text({ Text = ("CLAIM ALL 3 FOR A FREE %s PACK"):format(string.upper(data.bonus.pack)), FontFace = F.Display, TextScaled = false, TextSize = 20, Size = UDim2.new(1, -160, 1, 0), Position = UDim2.fromOffset(16, 0), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 13 }).Parent = bonus
+		if data.bonusClaimed then
+			UI.text({ Text = "CLAIMED", FontFace = F.Heavy, TextColor3 = C.Accent, TextScaled = false, TextSize = 14, Size = UDim2.fromOffset(106, 20), Position = UDim2.new(1, -116, 0.5, -10), ZIndex = 13 }).Parent = bonus
+		else
+			UI.button({ kind = data.bonusReady and "gold" or "disabled", icon = "packs", text = "OPEN", size = UDim2.fromOffset(106, 40), position = UDim2.new(1, -116, 0.5, -20), textSize = 16, z = 13 }, function()
+				if data.bonusReady then
+					claimChallenge(set.bonusKind)
+				end
+			end).Parent = bonus
+		end
+		bonus.Parent = challengesBody
+	end
+end
+
+local function applyChallenges(snap)
+	if not snap then
+		return
+	end
+	if snap.completed then
+		for _, text in snap.completed do
+			toast("CHALLENGE COMPLETE: " .. text .. "  -  claim your reward!", C.Accent)
+		end
+		Sounds.Play("cheer", 0.4)
+		return
+	end
+	challengeState = snap
+	local ready = 0
+	for _, set in { snap.daily, snap.weekly } do
+		for _, ch in set.list do
+			ready += (ch.complete and not ch.claimed) and 1 or 0
+		end
+		ready += set.bonusReady and 1 or 0
+	end
+	challengeWidget:SetAttribute("Ready", ready)
+	renderWidget()
+	if challengesPanel.Visible then
+		renderChallenges()
+	end
+end
+Remotes:WaitForChild("ChallengesChanged").OnClientEvent:Connect(applyChallenges)
+task.spawn(function()
+	applyChallenges(Remotes:WaitForChild("GetChallenges"):InvokeServer())
+	while true do -- keep the reset timers ticking
+		task.wait(30)
+		if challengeState then
+			local t = challengeWidget:FindFirstChild("Timer")
+			if t then
+				t.Text = "RESETS IN " .. fmtDuration(math.max(0, challengeState.daily.endsAt - os.time()))
+			end
+			if challengeState.daily.endsAt <= os.time() then
+				applyChallenges(Remotes.GetChallenges:InvokeServer()) -- new day
+			end
+		end
+	end
+end)
+renderWidget()
+placeWidget()
+
+-- leaderboard panel
+local leaderboardTab = "week"
+function renderLeaderboard()
+	leaderboardBody:ClearAllChildren()
+	new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }).Parent = leaderboardBody
+	local tabs = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 44), LayoutOrder = 0, ZIndex = 12 }, {
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8) }),
+	})
+	for _, t in { { "week", "THIS WEEK" }, { "allTime", "ALL TIME" } } do
+		UI.button({ kind = leaderboardTab == t[1] and "gold" or "dark", text = t[2], size = UDim2.fromOffset(150, 40), textSize = 16, z = 12 }, function()
+			leaderboardTab = t[1]
+			renderLeaderboard()
+		end).Parent = tabs
+	end
+	tabs.Parent = leaderboardBody
+	local data = Remotes.GetLeaderboard:InvokeServer() or {}
+	local rows = data[leaderboardTab] or {}
+	if #rows == 0 then
+		UI.text({ Text = "No wins yet " .. (leaderboardTab == "week" and "this week" or "") .. " - win a game to claim the top spot!", FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 16, Size = UDim2.new(1, 0, 0, 30), LayoutOrder = 1, ZIndex = 12 }).Parent = leaderboardBody
+	end
+	local medal = { C.Gold, Color3.fromRGB(200, 205, 215), Color3.fromRGB(205, 127, 70) }
+	for i, r in rows do
+		local me = r.userId == player.UserId
+		local row = new("Frame", { BackgroundColor3 = me and Color3.fromRGB(20, 70, 50) or C.Panel2, BackgroundTransparency = 0.15, Size = UDim2.new(1, -10, 0, 48), LayoutOrder = i, ZIndex = 12 }, { UI.corner(10), UI.stroke(me and C.Accent or (medal[i] or C.Stroke), me and 2 or 1, medal[i] and 0.3 or 0) })
+		UI.text({ Text = tostring(r.rank), FontFace = F.Number, TextColor3 = medal[i] or C.Muted, TextScaled = false, TextSize = 26, Size = UDim2.fromOffset(50, 48), ZIndex = 13 }).Parent = row
+		UI.text({ Text = string.upper(r.name) .. (me and "  (YOU)" or ""), FontFace = F.Display, TextScaled = false, TextSize = 22, Size = UDim2.new(1, -220, 1, 0), Position = UDim2.fromOffset(60, 0), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 13 }).Parent = row
+		UI.text({ Text = UI.commas(r.wins) .. " W", FontFace = F.Number, TextColor3 = C.Accent, TextScaled = false, TextSize = 24, Size = UDim2.fromOffset(140, 48), Position = UDim2.new(1, -150, 0, 0), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 13 }).Parent = row
+		row.Parent = leaderboardBody
+	end
+	local foot = leaderboardTab == "week" and ("RESETS IN " .. fmtDuration(math.max(0, (data.weekEndsAt or os.time()) - os.time())) .. "  -  UPDATES EVERY 2 MINUTES")
+		or ("YOUR WINS: " .. UI.commas(state.stats.wins or 0) .. "  -  UPDATES EVERY 2 MINUTES")
+	UI.text({ Text = foot, FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 13, Size = UDim2.new(1, 0, 0, 24), LayoutOrder = 100, ZIndex = 12 }).Parent = leaderboardBody
+end
+
+-- =========================================================================================
+-- Difficulty picker (PLAY)
+-- =========================================================================================
+local diffModal = UI.glass({ Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(860, 400), ZIndex = 70 }, {
+	new("UIScale", { Name = "Fit" }),
+})
+diffModal.Parent = gui
+
+function openDifficulty()
+	diffModal:ClearAllChildren()
+	new("UIScale", { Name = "Fit", Scale = math.clamp((gui.AbsoluteSize.X - 24) / 880, 0.4, 1) }).Parent = diffModal
+	UI.corner(14).Parent = diffModal
+	UI.stroke(C.Accent, 2).Parent = diffModal
+	UI.text({ Text = "CHOOSE DIFFICULTY", FontFace = F.Display, TextScaled = false, TextSize = 36, Size = UDim2.new(1, 0, 0, 44), Position = UDim2.fromOffset(0, 14), ZIndex = 71 }).Parent = diffModal
+	local myOvr = teamRatings().ovr
+	UI.text({ Text = ("YOUR TEAM: %d OVR  -  EVERY WIN COUNTS FOR JERSEYS AND THE LEADERBOARD"):format(myOvr), FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 20), Position = UDim2.fromOffset(0, 60), ZIndex = 71 }).Parent = diffModal
+	UI.button({ kind = "dark", icon = "close", size = UDim2.fromOffset(44, 40), position = UDim2.new(1, -58, 0, 12), z = 72 }, function()
+		diffModal.Visible = false
+	end).Parent = diffModal
+	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -40, 0, 290), Position = UDim2.fromOffset(20, 96), ZIndex = 71 }, {
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, Padding = UDim.new(0, 12) }),
+	})
+	row.Parent = diffModal
+	local last = state.difficulty or MatchConfig.DefaultDifficulty
+	for _, d in MatchConfig.Difficulties do
+		local sel = d.id == last
+		local card = new("TextButton", { AutoButtonColor = false, Text = "", BackgroundColor3 = C.Panel2, Size = UDim2.fromOffset(193, 284), LayoutOrder = d.order, ZIndex = 71 }, {
+			UI.corner(14),
+			UI.stroke(d.color, sel and 3 or 1, sel and 0 or 0.4),
+		})
+		local top = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.new(1, 0, 0, 86), ZIndex = 72 }, { UI.corner(14) })
+		UI.flowGradient(top, d.color, d.color:Lerp(C.BG, 0.5), d.color)
+		top.Parent = card
+		UI.text({ Text = d.name, FontFace = F.Display, TextScaled = false, TextSize = 34, TextStrokeTransparency = 0.6, Size = UDim2.new(1, 0, 0, 40), Position = UDim2.fromOffset(0, 10), ZIndex = 73 }).Parent = card
+		UI.text({ Text = ("CPU ~%d OVR"):format(math.clamp(myOvr + d.ovr, 50, 97)), FontFace = F.Heavy, TextColor3 = C.BG, TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(0, 54), ZIndex = 73 }).Parent = card
+		UI.text({ Text = d.desc, FontFace = F.Medium, TextColor3 = C.Muted, TextWrapped = true, TextScaled = false, TextSize = 14, Size = UDim2.new(1, -24, 0, 40), Position = UDim2.fromOffset(12, 98), ZIndex = 72 }).Parent = card
+		UI.text({ Text = "WIN", FontFace = F.Heavy, TextColor3 = C.Muted, TextScaled = false, TextSize = 12, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 148), ZIndex = 72 }).Parent = card
+		local vipMult = (state.store and state.store.vip) and 2 or 1
+		UI.text({ Text = "+" .. UI.commas(MatchConfig.RewardFor("Win", d.id) * vipMult), FontFace = F.Number, TextColor3 = C.Gold, TextScaled = false, TextSize = 30, Size = UDim2.new(1, 0, 0, 34), Position = UDim2.fromOffset(0, 164), ZIndex = 72 }).Parent = card
+		UI.text({ Text = ("COINS  -  x%s"):format(tostring(d.reward)), FontFace = F.Heavy, TextColor3 = C.Muted, TextScaled = false, TextSize = 12, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 198), ZIndex = 72 }).Parent = card
+		local go = UI.button({ kind = sel and "primary" or "dark", text = "PLAY", size = UDim2.new(1, -24, 0, 48), position = UDim2.new(0, 12, 1, -60), textSize = 20, z = 73 }, function()
+			diffModal.Visible = false
+			startMatch(d.id)
+		end)
+		go.Parent = card
+		card.Activated:Connect(function()
+			diffModal.Visible = false
+			startMatch(d.id)
+		end)
+		card.Parent = row
+	end
+	diffModal.Visible = true
+	UI.pop(diffModal, 0.25)
+end
+
+-- =========================================================================================
 -- Play
 -- =========================================================================================
 local starting = false
-function startMatch()
+function startMatch(difficultyId)
 	if starting then
 		return
 	end
@@ -1481,7 +1804,7 @@ function startMatch()
 	closePanels()
 	UI.setButton(playButton, "LOADING")
 	local ok, res = pcall(function()
-		return Remotes:WaitForChild("StartMatch"):InvokeServer()
+		return Remotes:WaitForChild("StartMatch"):InvokeServer(difficultyId)
 	end)
 	UI.setButton(playButton, "PLAY")
 	starting = false
@@ -1673,6 +1996,7 @@ local function applyInventory(inv)
 	state.lineup = inv.lineup or {}
 	state.stats = inv.stats or {}
 	state.jersey = inv.jersey or state.jersey
+	state.difficulty = inv.difficulty or state.difficulty
 	local open = 0
 	for _, j in Jerseys.List do
 		open += Jerseys.IsUnlocked(j.id, state.stats.wins) and 1 or 0

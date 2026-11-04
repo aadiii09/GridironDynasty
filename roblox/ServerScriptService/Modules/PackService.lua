@@ -16,6 +16,7 @@ local PackConfig = require(ReplicatedStorage.Shared.PackConfig)
 local StoreConfig = require(ReplicatedStorage.Shared.StoreConfig)
 local CardDatabase = require(ServerScriptService.Modules.CardDatabase)
 local PlayerData = require(ServerScriptService.Modules.PlayerData)
+local ChallengeService = require(ServerScriptService.Modules.ChallengeService)
 
 local PackService = {}
 
@@ -115,6 +116,20 @@ local function grant(player, pack, source)
 		table.insert(result.cards, { uid = uids[i], id = id })
 	end
 	log(("%s opened %s (%s): %s"):format(player.Name, pack.id, source, table.concat(ids, ", ")))
+	task.spawn(ChallengeService.Record, player, { packs = 1 })
+	return result
+end
+
+-- A free pack given as a reward (challenges): rolled, added, and revealed on the client.
+-- Not a paid random item (nothing was bought).
+function PackService.GrantFree(player, packId, source)
+	local pack = PackConfig.ById[packId]
+	if not pack or not CardDatabase.IsReady() then
+		return nil
+	end
+	local result = grant(player, pack, source or "reward")
+	result.ok = true
+	remotes.PackOpened:FireClient(player, result)
 	return result
 end
 

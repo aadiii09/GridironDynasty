@@ -177,7 +177,7 @@ local function render()
 	local ordinal = ({ "1st", "2nd", "3rd", "4th" })[s.down] or (s.down .. "th")
 	situation.Text = ("%s & %s   |   %s   |   DRIVE %d/%d"):format(ordinal, s.toGo, s.spot, math.min(s.drive, s.drives), s.drives)
 	if s.phase == "final" then
-		situation.Text = ("FINAL   |   TEAM RATING  %d vs %d"):format(s.ratings.you.ovr, s.ratings.cpu.ovr)
+		situation.Text = ("FINAL   |   %s   |   TEAM RATING  %d vs %d"):format(s.difficulty or "", s.ratings.you.ovr, s.ratings.cpu.ovr)
 	end
 
 	clearControls()
@@ -236,7 +236,7 @@ local function render()
 		finalTitle.TextColor3 = win and C.Accent or s.final.result == "Loss" and C.Red or C.Gold
 		finalPanel:FindFirstChildOfClass("UIStroke").Color = finalTitle.TextColor3
 		finalScore.Text = ("YOU %d  -  %d %s"):format(s.you, s.cpu, string.upper(s.opponent.name))
-		finalCoins.Text = ("+%d COINS"):format(s.final.coins)
+		finalCoins.Text = ("+%d COINS%s"):format(s.final.coins, s.final.difficulty and ("  -  %s x%s"):format(s.final.difficulty, tostring(s.final.multiplier)) or "")
 		local unlocked = s.final.unlocked or {}
 		finalUnlock.Text = #unlocked > 0 and ("NEW JERSEY UNLOCKED: " .. string.upper(table.concat(unlocked, ", ")) .. "  -  equip it in the Locker") or ""
 	end

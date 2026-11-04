@@ -16,6 +16,27 @@ MatchConfig.MaxPlaySeconds = 20
 
 MatchConfig.Rewards = { Win = 400, Tie = 250, Loss = 150 }
 
+-- AI difficulty: the CPU team is built around your team rating + ovr, and Coin rewards scale.
+-- Every win counts toward your record, jerseys and the leaderboards.
+MatchConfig.Difficulties = {
+	{ id = "rookie", name = "ROOKIE", ovr = -7, reward = 0.75, color = Color3.fromRGB(64, 160, 255), desc = "Weaker opponents. Learn the game." },
+	{ id = "pro", name = "PRO", ovr = 0, reward = 1, color = Color3.fromRGB(46, 255, 140), desc = "An even matchup with your team." },
+	{ id = "allpro", name = "ALL-PRO", ovr = 5, reward = 1.5, color = Color3.fromRGB(255, 196, 46), desc = "Better players at every spot." },
+	{ id = "legend", name = "LEGEND", ovr = 10, reward = 2.25, color = Color3.fromRGB(255, 80, 90), desc = "Stacked teams. Only for the best." },
+}
+MatchConfig.DefaultDifficulty = "pro"
+MatchConfig.DifficultyById = {}
+for i, d in MatchConfig.Difficulties do
+	d.order = i
+	MatchConfig.DifficultyById[d.id] = d
+end
+
+-- Coins for a result at a difficulty (before the VIP double)
+function MatchConfig.RewardFor(result, difficultyId)
+	local d = MatchConfig.DifficultyById[difficultyId] or MatchConfig.DifficultyById[MatchConfig.DefaultDifficulty]
+	return math.floor(MatchConfig.Rewards[result] * d.reward / 5 + 0.5) * 5
+end
+
 -- Pre-snap spots in yards relative to the ball (x sideways, y downfield; negative y = backfield)
 MatchConfig.Formation = {
 	Offense = {

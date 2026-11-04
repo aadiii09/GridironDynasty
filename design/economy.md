@@ -69,3 +69,32 @@ The pack screen's VIEW ODDS shows both tables plus every card's exact % (tier % 
 ## Robux packs setup
 
 Each Robux pack needs a Developer Product (Creator Hub > your experience > Monetization > Developer Products) with the matching price. Put its ID in `productId` in PackConfig.lua. Until then the pack shows "Coming soon".
+
+## Difficulty (vs AI)
+
+| Difficulty | CPU team | Win / Tie / Loss coins |
+|---|---|---|
+| Rookie | your team OVR - 7 | 300 / 190 / 115 |
+| Pro (default) | even | 400 / 250 / 150 |
+| All-Pro | +5 | 600 / 375 / 225 |
+| Legend | +10 | 900 / 565 / 340 |
+
+VIP doubles all of these. Every win counts toward jerseys and the leaderboards.
+
+## Challenges
+
+- 3 daily challenges (reset 00:00 UTC) worth 150-300 Coins each; claim all 3 for a free Starter Pack.
+- 3 weekly challenges (reset Monday 00:00 UTC) worth 1,500-2,500 Coins or a Pro Pack; claim all 3 for a free Elite Pack.
+- Everyone gets the same set each day/week (picked from pools in `ChallengeConfig.lua`).
+- Match stats only count when a game is finished (quitting forfeits that game's progress).
+- Reward packs are not paid random items (nothing is bought), so they're fine under the paid-pack policy.
+
+## Team chemistry
+
+3+ starters from the same team get +1 to OVR and every rating, 5+ get +2, 7+ get +3 (max 99).
+It shows on the lineup screen and in the team rating, and applies in games. It gives players a reason to chase specific teams' cards.
+
+## Leaderboards
+
+Most wins this week (resets Monday 00:00 UTC) and all time, top 10, refreshed every 2 minutes.
+Shown on the lobby board and in the RANKS panel.

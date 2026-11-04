@@ -38,15 +38,22 @@ remote("RemoteFunction", "StartMatch")
 remote("RemoteEvent", "MatchAction")
 remote("RemoteEvent", "MatchState")
 local SetJersey = remote("RemoteFunction", "SetJersey")
+remote("RemoteFunction", "GetChallenges")
+remote("RemoteFunction", "ClaimChallenge")
+remote("RemoteEvent", "ChallengesChanged")
+remote("RemoteFunction", "GetLeaderboard")
 
 local PackService = require(ServerScriptService.Modules.PackService)
 local LineupService = require(ServerScriptService.Modules.LineupService)
 local MatchService = require(ServerScriptService.Modules.Match.MatchService)
 local World = require(ServerScriptService.Modules.World)
 local StoreService = require(ServerScriptService.Modules.StoreService)
+local ChallengeService = require(ServerScriptService.Modules.ChallengeService)
+local LeaderboardService = require(ServerScriptService.Modules.LeaderboardService)
 
 World.SetupLighting()
-World.BuildLobby()
+local lobby = World.BuildLobby()
+LeaderboardService.BuildBoard(lobby)
 
 local function snapshotFor(player)
 	local profile = PlayerData.Get(player)
@@ -63,6 +70,7 @@ local function snapshotFor(player)
 		lineup = profile.data.lineup,
 		stats = profile.data.stats,
 		jersey = Jerseys.Get(profile.data.jersey).id,
+		difficulty = profile.data.difficulty,
 		dataVersion = CardDatabase.Version(),
 	}
 end
@@ -100,6 +108,10 @@ end
 local givingStarter = {} -- [userId] = true; keyed by user so it survives any profile reload
 
 PlayerData.Changed.Event:Connect(function(player, profile)
+	if not profile.leaderboardSynced then
+		profile.leaderboardSynced = true
+		LeaderboardService.SyncTotal(player, profile.data.stats.wins)
+	end
 	if not profile.data.starterGiven and not givingStarter[player.UserId] then
 		givingStarter[player.UserId] = true
 		task.spawn(giveStarterSquad, player)
@@ -149,4 +161,6 @@ PackService.Start(remotes)
 LineupService.Start(remotes)
 MatchService.Start(remotes)
 StoreService.Start(remotes)
+ChallengeService.Start(remotes, PackService.GrantFree)
+LeaderboardService.Start(remotes)
 PlayerData.Start()

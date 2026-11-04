@@ -30,6 +30,8 @@ local Npc = require(ServerScriptService.Modules.Match.Npc)
 local StoreService = require(ServerScriptService.Modules.StoreService)
 local Ratings = require(ReplicatedStorage.Shared.Ratings)
 local Jerseys = require(ReplicatedStorage.Shared.Jerseys)
+local ChallengeService = require(ServerScriptService.Modules.ChallengeService)
+local LeaderboardService = require(ServerScriptService.Modules.LeaderboardService)
 
 local MatchService = {}
 
@@ -92,6 +94,21 @@ end
 
 -- Squads ------------------------------------------------------------------------------
 
+-- A starter boosted by team chemistry: +n to OVR and every rating (max 99)
+local function boosted(card, n)
+	if not n or n <= 0 then
+		return card
+	end
+	local c = table.clone(card)
+	c.ovr = math.min(99, card.ovr + n)
+	c.attrs = {}
+	for k, v in card.attrs do
+		c.attrs[k] = math.min(99, v + n)
+	end
+	c.chem = n
+	return c
+end
+
 local function userSquad(profile)
 	local cards, infos = {}, {}
 	for _, slot in LineupConfig.Slots do
@@ -101,7 +118,17 @@ local function userSquad(profile)
 		cards[slot.id] = card or fillerCard(slot.pos)
 		infos[slot.id] = card and CardDatabase.GetPlayerInfo(card.pid) or { last = "Backup", number = 0 }
 	end
-	return cards, infos
+	local bySlot = {}
+	for slotId in cards do
+		bySlot[slotId] = slotId
+	end
+	local chem = LineupConfig.Chemistry(bySlot, function(slotId)
+		return cards[slotId]
+	end)
+	for slotId, n in chem.boost do
+		cards[slotId] = boosted(cards[slotId], n)
+	end
+	return cards, infos, chem
 end
 
 local function cpuSquad(targetOvr)
@@ -135,7 +162,7 @@ local function ratingsFor(cards)
 	end
 	return LineupConfig.TeamRatings(lineup, function(slotId)
 		return cards[slotId]
-	end)
+	end, true) -- chemistry is already in the (boosted) cards
 end
 
 -- Avatar ----------------------------------------------------------------------------------
@@ -171,6 +198,11 @@ local function makeAvatarUnit(m, npc)
 		return root and flat(root.AssemblyLinearVelocity) or Vector3.zero
 	end
 	return u
+end
+
+-- Per-game stats for challenges (counted when the game finishes)
+local function tally(m, key, n)
+	m.tally[key] = (m.tally[key] or 0) + (n or 1)
 end
 
 local function nameOf(unit)
@@ -226,6 +258,7 @@ local function sendState(m, message, color)
 		message = message,
 		messageColor = color and color:ToHex(),
 		final = m.final,
+		difficulty = m.difficulty and m.difficulty.name,
 	})
 end
 
@@ -689,6 +722,7 @@ local function attemptTackle(m, def, now)
 		if def.isAvatar then
 			sendState(m, moveName == "ESCAPED" and "HE ESCAPED!" or (moveName .. " - MISSED TACKLE!"), RED)
 		elseif m.possession == "user" then
+			tally(m, "broken")
 			sendState(m, moveName .. "!", GREEN)
 		end
 	end
@@ -824,6 +858,9 @@ local function think(m, now)
 					-- CPU QB in the pocket: settle a yard deeper than his spot
 					unit:MoveTo(unit.home - m.field:Downfield() * Y, now)
 				end
+			elseif play.state == "air" and play.air.target == unit then
+				-- the ball is coming to him: break off the route and attack the landing spot
+				unit:MoveTo(play.air.to, now)
 			elseif play.state ~= "carry" and route then
 				local target = route.points[route.index]
 				if hdist(unit:Position(), target) < 2.5 and route.index < #route.points then
@@ -1005,6 +1042,7 @@ local function resolveCatch(m)
 			r.CTH, r.CIT, r.SPC, rcvDist, sep, cov, nearest and nearest.isAvatar and " (you)" or "", pCatch * 100))
 		if chance(pCatch) then
 			if m.possession == "user" then
+				m.play.caught = true
 				swapInto(m, rcv.slot)
 				sendState(m, "CAUGHT! RUN!", GREEN)
 			else
@@ -1130,6 +1168,26 @@ function endPlay(m, result, spotY, defender, receiver)
 
 	local userBall = m.possession == "user"
 	local yards = spotY and (spotY - m.los) / Y or 0
+	if userBall then
+		if result == "td" then
+			tally(m, "td")
+			tally(m, play.caught and "passTd" or "rushTd")
+		end
+		if spotY and yards > 0 and (result == "td" or result == "tackle" or result == "out" or result == "timeout") then
+			tally(m, "yards", math.floor(yards + 0.5))
+		end
+	else
+		if result == "sack" then
+			tally(m, "sacks")
+		elseif result == "int" then
+			tally(m, "ints")
+		elseif result == "fumble" then
+			tally(m, "fumbles")
+		end
+		if result == "tackle" or result == "sack" or result == "fumble" then
+			tally(m, "stops")
+		end
+	end
 	local msg, color, driveOver = nil, Color3.new(1, 1, 1), false
 	local good, bad = GREEN, RED
 	if not userBall then
@@ -1284,10 +1342,12 @@ function throwBall(m, rcv)
 	end
 	local qb = m.units.Offense.QB.attrs
 	local ballSpeed = 40 + qb.THP * 0.4 -- THP 70 -> 68, 95 -> 78 studs/s
-	-- lead the receiver along his actual route (so throws hit him after his cut)
+	-- lead the receiver along his actual route (so throws hit him after his cut), at the speed
+	-- he's really moving (still building up, jammed, or in a cut), not just his top speed
+	local runSpeed = math.clamp((rcv:Velocity().Magnitude + rcv.speed) / 2, rcv.speed * 0.5, rcv.speed)
 	local function along(t)
 		local pos = flat(rcv:Position())
-		local budget = rcv.speed * t
+		local budget = runSpeed * t
 		for i = route.index, #route.points do
 			local wp = flat(route.points[i])
 			local seg = (wp - pos).Magnitude
@@ -1426,7 +1486,8 @@ function finishGame(m)
 	local you, cpu = m.score.you, m.score.cpu
 	local result = you > cpu and "Win" or you < cpu and "Loss" or "Tie"
 	local vip = StoreService.IsVIP(m.player)
-	local coins = MatchConfig.Rewards[result] * (vip and 2 or 1)
+	local diff = m.difficulty
+	local coins = MatchConfig.RewardFor(result, diff.id) * (vip and 2 or 1)
 	local unlocked = {}
 	if PlayerData.Get(m.player) then
 		PlayerData.AddCoins(m.player, coins)
@@ -1442,9 +1503,24 @@ function finishGame(m)
 				data.stats.ties = (data.stats.ties or 0) + 1
 			end
 		end)
-		task.spawn(PlayerData.SaveNow, m.player)
+		local win = result == "Win" and 1 or 0
+		local t = m.tally
+		ChallengeService.Record(m.player, {
+			games = 1,
+			wins = win,
+			winsPro = (win == 1 and diff.order >= 2) and 1 or 0,
+			winsAllPro = (win == 1 and diff.order >= 3) and 1 or 0,
+			shutouts = (win == 1 and cpu == 0) and 1 or 0,
+			td = t.td, passTd = t.passTd, rushTd = t.rushTd, yards = t.yards,
+			sacks = t.sacks, ints = t.ints, fumbles = t.fumbles, stops = t.stops, broken = t.broken,
+		})
+		task.spawn(PlayerData.SaveNow, m.player) -- after the challenge progress is in
+		if win == 1 then
+			local profile = PlayerData.Get(m.player)
+			LeaderboardService.RecordWin(m.player, profile and profile.data.stats.wins or 0)
+		end
 	end
-	m.final = { result = result, coins = coins, vip = vip, unlocked = unlocked }
+	m.final = { result = result, coins = coins, vip = vip, unlocked = unlocked, difficulty = diff.name, multiplier = diff.reward, tally = m.tally }
 	log(m.player.Name, result, you, cpu)
 	sendState(m, result == "Win" and "YOU WIN!" or result == "Loss" and "YOU LOSE" or "TIE GAME", result == "Win" and GREEN or Color3.fromRGB(255, 196, 46))
 end
@@ -1505,7 +1581,7 @@ end
 function MatchService.Start(remoteFolder)
 	remotes = remoteFolder
 
-	remotes.StartMatch.OnServerInvoke = function(player)
+	remotes.StartMatch.OnServerInvoke = function(player, difficultyId)
 		if matches[player] then
 			return { ok = false, err = "You're already in a game." }
 		end
@@ -1516,9 +1592,13 @@ function MatchService.Start(remoteFolder)
 			return { ok = false, err = "Still loading, try again in a moment." }
 		end
 
+		local difficulty = MatchConfig.DifficultyById[difficultyId] or MatchConfig.DifficultyById[MatchConfig.DefaultDifficulty]
+		PlayerData.Update(player, function(data)
+			data.difficulty = difficulty.id
+		end)
 		local userCards, userInfos = userSquad(profile)
 		local userOvr = ratingsFor(userCards).ovr
-		local cpuTeam, cpuCards, cpuInfos = cpuSquad(userOvr)
+		local cpuTeam, cpuCards, cpuInfos = cpuSquad(math.clamp(userOvr + difficulty.ovr, 50, 97))
 		local cpuPrimary = Color3.fromHex(cpuTeam.primary)
 		local cpuSecondary = Color3.fromHex(cpuTeam.secondary)
 		local jersey = Jerseys.Get(profile.data.jersey)
@@ -1544,6 +1624,8 @@ function MatchService.Start(remoteFolder)
 			score = { you = 0, cpu = 0 },
 			drive = 1,
 			jersey = jersey,
+			difficulty = difficulty,
+			tally = {},
 		}
 		matches[player] = m
 		local buildStart = os.clock()
@@ -1565,7 +1647,7 @@ function MatchService.Start(remoteFolder)
 				cleanup(m) -- died/respawned mid-game: end it
 			end)
 
-			log(player.Name, "vs", cpuTeam.city, cpuTeam.name, "you", m.user.ratings.ovr, "cpu", m.cpu.ratings.ovr, ("built in %.1fs"):format(os.clock() - buildStart))
+			log(player.Name, "vs", cpuTeam.city, cpuTeam.name, "(" .. difficulty.name .. ")", "you", m.user.ratings.ovr, "cpu", m.cpu.ratings.ovr, ("built in %.1fs"):format(os.clock() - buildStart))
 			startDrive(m, "user")
 		end)
 		if not ok then
