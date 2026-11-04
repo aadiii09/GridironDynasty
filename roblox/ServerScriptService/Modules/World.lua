@@ -41,7 +41,7 @@ function World.SetupLighting()
 		Glare = 0.3,
 		Haze = 1.1,
 	})
-	effect("BloomEffect", "StadiumBloom", { Intensity = 0.55, Size = 26, Threshold = 1.15 })
+	effect("BloomEffect", "StadiumBloom", { Intensity = 0.45, Size = 24, Threshold = 1.4 })
 	effect("ColorCorrectionEffect", "StadiumGrade", { Contrast = 0.12, Saturation = 0.12, Brightness = 0.02, TintColor = Color3.fromRGB(255, 246, 236) })
 	effect("SunRaysEffect", "StadiumRays", { Intensity = 0.06, Spread = 0.6 })
 end

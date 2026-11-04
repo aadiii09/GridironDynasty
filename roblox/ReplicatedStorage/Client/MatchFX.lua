@@ -22,11 +22,11 @@ local A = CFrame.Angles
 -- waist leans forward.
 local POSES = {
 	stance3 = { -- 3-point stance (linemen): low, hand on the turf
-		Root = CFrame.new(0, -1.15, 0) * A(rad(-38), 0, 0),
-		Waist = A(rad(-22), 0, 0),
-		Neck = A(rad(45), 0, 0),
-		RightHip = A(rad(95), 0, 0), RightKnee = A(rad(-100), 0, 0),
-		LeftHip = A(rad(70), 0, 0), LeftKnee = A(rad(-95), 0, 0),
+		Root = CFrame.new(0, -0.85, 0) * A(rad(-32), 0, 0),
+		Waist = A(rad(-20), 0, 0),
+		Neck = A(rad(40), 0, 0),
+		RightHip = A(rad(80), 0, 0), RightKnee = A(rad(-85), 0, 0),
+		LeftHip = A(rad(60), 0, 0), LeftKnee = A(rad(-80), 0, 0),
 		RightShoulder = A(rad(70), 0, 0), RightElbow = A(rad(5), 0, 0),
 		LeftShoulder = A(rad(20), 0, rad(-8)), LeftElbow = A(rad(40), 0, 0),
 	},
@@ -100,7 +100,8 @@ local function rigFor(model)
 	for jointName, partName in JOINT_PARENT do
 		local p = model:FindFirstChild(partName)
 		local j = p and p:FindFirstChild(jointName)
-		if j and j:IsA("Motor6D") then
+		-- classic rigs use Motor6D; current Roblox rigs use AnimationConstraint (both have Transform)
+		if j and (j:IsA("Motor6D") or j:IsA("AnimationConstraint")) then
 			r.joints[jointName] = j
 		end
 	end

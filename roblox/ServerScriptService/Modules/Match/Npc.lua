@@ -26,7 +26,7 @@ local SKINS = {
 	Color3.fromRGB(234, 192, 160), Color3.fromRGB(204, 142, 105), Color3.fromRGB(160, 102, 70),
 	Color3.fromRGB(124, 78, 52), Color3.fromRGB(92, 58, 40),
 }
-local PANTS = Color3.fromRGB(236, 236, 240)
+local PANTS = Color3.fromRGB(196, 198, 206) -- off-white so bloom doesn't make them glow
 local CLEATS = Color3.fromRGB(22, 22, 26)
 local MASK = Color3.fromRGB(205, 208, 214)
 local FONT_NUM = Font.fromEnum(Enum.Font.GothamBlack)
