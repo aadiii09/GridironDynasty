@@ -14,6 +14,8 @@ local files = {
 	"ReplicatedStorage/Shared/StoreConfig.lua",
 	"ServerScriptService/Modules/StoreService.lua",
 	"ReplicatedStorage/Client/MatchCamera.lua",
+	"ReplicatedStorage/Client/Sounds.lua",
+	"ReplicatedStorage/Client/MatchFX.lua",
 	"ServerScriptService/Modules/Match/Field.lua",
 	"ServerScriptService/Modules/Match/Npc.lua",
 	"ServerScriptService/Modules/Match/MatchService.lua",

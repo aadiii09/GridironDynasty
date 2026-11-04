@@ -39,6 +39,8 @@ local GOLD = Color3.fromRGB(255, 214, 40)
 local remotes
 local matches = {} -- [Player] = match
 local rng = Random.new()
+local setBallVisible, releaseBall, holdBall, setPose -- ball + pose helpers (defined further down)
+local PRESNAP_POSE = { OL1 = "stance3", OL2 = "stance3", DL1 = "stance3", DL2 = "stance3", QB = "qb" }
 
 local function log(...)
 	print("[Match]", ...)
@@ -194,6 +196,13 @@ local function sendState(m, message, color)
 		play = m.call and m.call.id,
 		defCall = m.defCall,
 		playState = m.play and m.play.state,
+		air = (m.play and m.play.state == "air" and m.play.air) and {
+			from = m.play.air.from,
+			to = m.play.air.to,
+			T = m.play.air.T,
+			h = m.play.air.h,
+			startedAt = m.play.air.startedAt,
+		} or nil,
 		targets = targets,
 		control = controlled and { slot = m.controlSlot, pos = controlled.card.pos, name = nameOf(controlled) } or nil,
 		-- for the broadcast camera
@@ -270,6 +279,14 @@ local function lineUp(m)
 	end
 	m.field:SetMarkers(m.los, m.firstDown)
 	m.ball.Parent = m.field.model
+	-- everyone settles into a stance; the QB has the ball
+	for _, side in m.units do
+		for slotId, unit in side do
+			local pos = unit.card.pos
+			setPose(unit, PRESNAP_POSE[slotId] or ((pos == "OL" or pos == "DL") and "stance3" or "stance2"))
+		end
+	end
+	holdBall(m, userBall and "avatar" or m.units.Offense.QB)
 end
 
 local function clearRings(m)
@@ -357,8 +374,12 @@ local function makeBall()
 		ball.Size = Vector3.new(0.8, 0.8, 1.2)
 		ball.Transparency = 1
 		local m = mesh:Clone()
+		m.Name = "Visual"
 		m.Size = m.Size * 1.7
 		m.Anchored = false
+		m.Massless = true
+		m.CanCollide = false
+		m.CanTouch = false
 		m.CFrame = CFrame.Angles(0, math.rad(90), 0)
 		local w = Instance.new("WeldConstraint")
 		w.Part0 = ball
@@ -378,6 +399,8 @@ local function makeBall()
 	ball.Anchored = true
 	ball.CanCollide = false
 	ball.CanQuery = false
+	ball.CanTouch = false
+	ball.Massless = true
 	local a0 = Instance.new("Attachment")
 	a0.Position = Vector3.new(0, 0.2, 0)
 	a0.Parent = ball
@@ -395,6 +418,61 @@ local function makeBall()
 	trail.Parent = ball
 	return ball, trail
 end
+
+-- Ball handling ------------------------------------------------------------------------------
+-- A held ball is welded to the carrier's hand so it moves with him on every client (no lag).
+-- A thrown ball is hidden here and drawn by each client from the throw's arc (see MatchFX).
+
+function setBallVisible(m, visible)
+	local visual = m.ball:FindFirstChild("Visual")
+	if visual then
+		visual.Transparency = visible and 0 or 1
+	else
+		m.ball.Transparency = visible and 0 or 1
+	end
+end
+
+function releaseBall(m)
+	if m.ballWeld then
+		m.ballWeld:Destroy()
+		m.ballWeld = nil
+	end
+	m.ball.Anchored = true
+end
+
+-- holder: "avatar" or an Npc
+function holdBall(m, holder)
+	releaseBall(m)
+	local char = holder == "avatar" and m.player.Character or (holder and holder.model)
+	local hand = char and (char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm") or char:FindFirstChild("HumanoidRootPart"))
+	setBallVisible(m, true)
+	if not hand then
+		return
+	end
+	m.ball.CFrame = hand.CFrame * CFrame.new(0, -0.35, -0.3)
+	m.ball.Anchored = false
+	local w = Instance.new("WeldConstraint")
+	w.Part0 = hand
+	w.Part1 = m.ball
+	w.Parent = m.ball
+	m.ballWeld = w
+end
+
+-- Poses are read by every client (MatchFX) and layered on top of the run/idle animations.
+function setPose(unit, pose, duration)
+	if not unit or unit.isAvatar or not unit.model then
+		return
+	end
+	unit.model:SetAttribute("Pose", pose)
+	if duration then
+		task.delay(duration, function()
+			if unit.model and unit.model:GetAttribute("Pose") == pose then
+				unit.model:SetAttribute("Pose", nil)
+			end
+		end)
+	end
+end
+
 
 -- All defenders that can tackle / cover right now (NPCs + you when you're on defense)
 local function defenders(m)
@@ -481,6 +559,8 @@ local function swapInto(m, slotId)
 	m.play.carrierName = nameOf(unit)
 	hum.WalkSpeed = unit.speed
 	m.play.state = "carry"
+	setPose(qb, "block")
+	holdBall(m, "avatar")
 end
 
 -- CPU ball: an NPC becomes the ball carrier.
@@ -489,6 +569,9 @@ local function giveTo(m, unit)
 	m.play.carrierCard = unit.card
 	m.play.carrierName = nameOf(unit)
 	m.play.state = "carry"
+	setPose(m.units.Offense.QB, nil)
+	setPose(unit, "carry")
+	holdBall(m, unit)
 end
 
 -- You on defense: jump into another defender (nearest the ball). The one you leave becomes AI.
@@ -533,6 +616,7 @@ local function attemptTackle(m, def, now)
 			c:Fall()
 		end
 		burst(m, pos - Vector3.new(0, 2.5, 0), nil, 14, "dust")
+		setPose(def, "dive", 1.2)
 		endPlay(m, m.play.state == "dropback" and "sack" or "tackle", fy, def)
 	else
 		def.stunUntil = now + (def.isAvatar and 0.5 or 0.7)
@@ -739,27 +823,11 @@ end
 
 local function updateBall(m, now)
 	local play = m.play
+	-- in the air: the server only tracks timing; every client draws the flight itself (MatchFX).
+	-- in hand: the ball is welded to the carrier, so nothing to do here.
 	if play.state == "air" then
 		local a = play.air
-		local s = math.clamp((now - a.t0) / a.T, 0, 1)
-		local p = a.from:Lerp(a.to, s) + Vector3.new(0, 4 * a.h * s * (1 - s), 0)
-		-- spiral: nose follows the flight path and the ball spins
-		local ahead = a.from:Lerp(a.to, math.min(s + 0.02, 1)) + Vector3.new(0, 4 * a.h * (s + 0.02) * (1 - s - 0.02), 0)
-		local look = (ahead - p).Magnitude > 0.01 and CFrame.lookAt(p, ahead) or CFrame.new(p)
-		m.ball.CFrame = look * CFrame.Angles(0, 0, now * 25)
-		m.ballTrail.Enabled = true
-		return s >= 1
-	end
-	m.ballTrail.Enabled = false
-	local holder
-	if play.carrier == "avatar" then
-		holder = m.player.Character
-	elseif play.carrier then
-		holder = play.carrier.model
-	end
-	local hand = holder and (holder:FindFirstChild("RightHand") or holder:FindFirstChild("Right Arm") or holder:FindFirstChild("HumanoidRootPart"))
-	if hand then
-		m.ball.CFrame = hand.CFrame * CFrame.new(0, -0.6, -0.3)
+		return (now - a.t0) / a.T >= 1
 	end
 	return false
 end
@@ -890,9 +958,20 @@ function endPlay(m, result, spotY, defender, receiver)
 	if not play or play.state == "dead" then
 		return
 	end
+	local wasAir = play.state == "air"
 	play.state = "dead"
 	if play.conn then
 		play.conn:Disconnect()
+	end
+	if wasAir and play.air then
+		-- incomplete / dropped / picked: the ball ends up on the turf where it landed
+		releaseBall(m)
+		local ground = m.field:ToWorld(0, 0, 0).Y
+		m.ball.CFrame = CFrame.new(play.air.to.X, ground + 0.4, play.air.to.Z) * CFrame.Angles(0, math.rad(rng:NextInteger(0, 359)), math.rad(90))
+		setBallVisible(m, true)
+	end
+	if result == "td" and play.carrier and play.carrier ~= "avatar" then
+		setPose(play.carrier, "celebrate", 2.5)
 	end
 	for _, side in m.units do
 		for _, unit in side do
@@ -902,7 +981,6 @@ function endPlay(m, result, spotY, defender, receiver)
 			end
 		end
 	end
-	m.ballTrail.Enabled = false
 	local _, hum = avatarParts(m)
 	if hum then
 		hum.WalkSpeed = 0
@@ -1006,6 +1084,13 @@ local function snap(m)
 	play.carrier = userBall and "avatar" or m.units.Offense.QB
 	play.carrierCard = m.units.Offense.QB.card
 	m.phase = "live"
+	-- out of the stance: linemen (and anyone staying in to block) block, everyone else runs
+	for _, side in m.units do
+		for slotId, unit in side do
+			local blocker = side == m.units.Offense and (slotId == "OL1" or slotId == "OL2" or m.call.routes[slotId] == "block")
+			setPose(unit, blocker and "block" or nil)
+		end
+	end
 	local _, hum, root = avatarParts(m)
 	if root then
 		root.Anchored = false
@@ -1072,9 +1157,16 @@ function throwBall(m, rcv)
 		to = Vector3.new(to.X, from.Y, to.Z),
 		T = T,
 		t0 = os.clock(),
+		startedAt = workspace:GetServerTimeNow(), -- clients draw the flight from this
 		h = math.clamp(dist * 0.18, 3, 22),
 		target = rcv,
 	}
+	if m.possession ~= "user" then
+		setPose(m.units.Offense.QB, "throw", 0.6)
+	end
+	releaseBall(m)
+	setBallVisible(m, false)
+	m.ball.CFrame = CFrame.new(play.air.from)
 	play.carrier = nil
 	play.state = "air"
 	sendState(m)

@@ -11,6 +11,10 @@ local MatchConfig = require(ReplicatedStorage.Shared.MatchConfig)
 local Assets = require(ReplicatedStorage.Shared.Assets)
 local UI = require(ReplicatedStorage.Client.UIKit)
 local MatchCamera = require(ReplicatedStorage.Client.MatchCamera)
+local MatchFX = require(ReplicatedStorage.Client.MatchFX)
+MatchCamera.BallPosition = function()
+	return MatchFX.BallPosition
+end
 
 local player = Players.LocalPlayer
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
@@ -234,6 +238,7 @@ end
 
 Remotes:WaitForChild("MatchState").OnClientEvent:Connect(function(s)
 	if s.event == "fall" then
+		MatchFX.Fall()
 		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 		if hum then
 			hum:ChangeState(Enum.HumanoidStateType.FallingDown)
@@ -244,6 +249,7 @@ Remotes:WaitForChild("MatchState").OnClientEvent:Connect(function(s)
 	if s.phase == "ended" then
 		state = nil
 		MatchCamera.Stop()
+		MatchFX.Stop()
 		gui.Enabled = false
 		if main then
 			main.Enabled = true
@@ -256,6 +262,7 @@ Remotes:WaitForChild("MatchState").OnClientEvent:Connect(function(s)
 	local firstState = state == nil
 	state = s
 	MatchCamera.Update(s)
+	MatchFX.Update(s)
 	gui.Enabled = true
 	if main then
 		main.Enabled = false

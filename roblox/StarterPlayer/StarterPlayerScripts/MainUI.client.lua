@@ -14,6 +14,7 @@ local Assets = require(ReplicatedStorage.Shared.Assets)
 local CardData = require(ReplicatedStorage.Client.CardData)
 local CardRenderer = require(ReplicatedStorage.Client.CardRenderer)
 local UI = require(ReplicatedStorage.Client.UIKit)
+local Sounds = require(ReplicatedStorage.Client.Sounds)
 
 local player = Players.LocalPlayer
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
@@ -246,7 +247,7 @@ function closePanels()
 	backdrop.Visible = false
 	dock.Visible = true
 	for _, w in hubOnly do
-		w.Visible = true
+		w.Visible = not w:GetAttribute("Dismissed")
 	end
 	UI.blur(false)
 end
@@ -259,7 +260,7 @@ function openPanel(panel)
 	backdrop.Visible = panel ~= nil
 	dock.Visible = panel == nil
 	for _, w in hubOnly do
-		w.Visible = panel == nil
+		w.Visible = panel == nil and not w:GetAttribute("Dismissed")
 	end
 	UI.blur(panel ~= nil)
 	if panel then
@@ -640,6 +641,7 @@ local function flipSlot(slot, info)
 		rays.ImageColor3 = tierColor
 		TweenService:Create(rays, TweenInfo.new(0.4), { ImageTransparency = 0.25 }):Play()
 		revealTitle.Text = info.card.tier == "Icon" and "ICON PULL!" or "ELITE PULL!"
+		Sounds.Play("cheer", info.card.tier == "Icon" and 1.2 or 0.8)
 		revealTitle.TextColor3 = tierColor
 		local back = slot:FindFirstChild("CardBack")
 		if back then
@@ -656,6 +658,7 @@ local function flipSlot(slot, info)
 	if back then
 		back:Destroy()
 	end
+	Sounds.Play("cardFlip", 1, 0.9 + math.random() * 0.25)
 	local face = CardRenderer.Create(info)
 	face.Size = UDim2.fromScale(1, 1)
 	face.ZIndex = 53
@@ -684,6 +687,7 @@ revealPack = function(pack, cards)
 
 	-- 1) the pack shakes and bursts
 	packImage.ImageColor3 = pack.color
+	Sounds.Play("packWhoosh")
 	packImage.Visible = true
 	packImage.Rotation = 0
 	UI.pop(packImage, 0.35)
@@ -694,6 +698,7 @@ revealPack = function(pack, cards)
 		task.wait(0.07)
 	end
 	doFlash(0.95)
+	Sounds.Play("packTear")
 	packImage.Visible = false
 
 	-- 2) cards land face down
@@ -1055,6 +1060,32 @@ end
 local featured = UI.glass({ Name = "Featured", Position = UDim2.fromOffset(16, 162), Size = UDim2.fromOffset(500, 230), ClipsDescendants = true })
 featured.Parent = hud
 table.insert(hubOnly, featured)
+
+-- the promo can be closed; a small OFFERS button brings it back
+local offersPill = UI.button({ kind = "purple", text = "OFFERS", icon = "packs", size = UDim2.fromOffset(140, 42), position = UDim2.fromOffset(16, 162), textSize = 16 })
+offersPill.Visible = false
+offersPill:SetAttribute("Dismissed", true)
+offersPill.Parent = hud
+table.insert(hubOnly, offersPill)
+local closePromo = UI.button({ kind = "dark", icon = "close", size = UDim2.fromOffset(34, 34), anchor = Vector2.new(1, 0), position = UDim2.new(1, -10, 0, 10), z = 30, padding = 6 }, function()
+	featured:SetAttribute("Dismissed", true)
+	local t = TweenService:Create(featured, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Position = UDim2.fromOffset(-520, 162) })
+	t:Play()
+	t.Completed:Wait()
+	featured.Visible = false
+	featured.Position = UDim2.fromOffset(16, 162)
+	offersPill:SetAttribute("Dismissed", nil)
+	offersPill.Visible = true
+	UI.pop(offersPill, 0.25)
+end)
+closePromo.Parent = featured
+offersPill.Activated:Connect(function()
+	offersPill:SetAttribute("Dismissed", true)
+	offersPill.Visible = false
+	featured:SetAttribute("Dismissed", nil)
+	featured.Visible = true
+	UI.pop(featured, 0.25)
+end)
 local slideHolder = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) })
 slideHolder.Parent = featured
 local dots = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -8), Size = UDim2.fromOffset(120, 10), ZIndex = 20 }, {
@@ -1226,6 +1257,7 @@ gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitHub)
 -- Daily reward + purchase celebrations
 -- =========================================================================================
 local function coinBurst(count)
+	Sounds.Play("coins")
 	local center = gui.AbsoluteSize / 2
 	local target = coinIcon.AbsolutePosition - gui.AbsolutePosition + coinIcon.AbsoluteSize / 2
 	for k = 1, count do
@@ -1358,3 +1390,6 @@ task.spawn(function()
 		teamChip.Position = UDim2.new(1, -12, 0, 47)
 	end
 end)
+
+-- lobby music
+Sounds.SetLoop("lobbyMusic")

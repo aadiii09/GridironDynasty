@@ -36,9 +36,10 @@ local function targetCFrame(dt)
 	local ball = s.ball
 	local playState = s.phase == "live" and s.playState or nil
 
-	-- ball in the air: ride behind it
-	if playState == "air" and ball and ball.Parent then
-		local p = ball.Position
+	-- ball in the air: ride behind it (the smooth locally-drawn ball from MatchFX)
+	local flightPos = MatchCamera.BallPosition and MatchCamera.BallPosition()
+	if playState == "air" and (flightPos or (ball and ball.Parent)) then
+		local p = flightPos or ball.Position
 		if lastBallPos then
 			local v = flat(p - lastBallPos)
 			if v.Magnitude > 0.05 then

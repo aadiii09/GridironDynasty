@@ -169,7 +169,22 @@ function UI.button(opts, onClick)
 	if onClick then
 		b.Activated:Connect(onClick)
 	end
+	b.Activated:Connect(function()
+		UI.clickSound()
+	end)
 	return b
+end
+
+-- every button clicks (Sounds is loaded lazily so UIKit has no hard dependency on it)
+local soundsModule
+function UI.clickSound()
+	if soundsModule == nil then
+		local ok, mod = pcall(require, game:GetService("ReplicatedStorage").Client.Sounds)
+		soundsModule = ok and mod or false
+	end
+	if soundsModule then
+		soundsModule.Play("click", 1, 0.95 + math.random() * 0.1)
+	end
 end
 
 function UI.setButton(b, textValue, kindName)
