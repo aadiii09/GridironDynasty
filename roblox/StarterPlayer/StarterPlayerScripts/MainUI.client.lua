@@ -11,6 +11,7 @@ local PackConfig = require(ReplicatedStorage.Shared.PackConfig)
 local StoreConfig = require(ReplicatedStorage.Shared.StoreConfig)
 local LineupConfig = require(ReplicatedStorage.Shared.LineupConfig)
 local Assets = require(ReplicatedStorage.Shared.Assets)
+local Ratings = require(ReplicatedStorage.Shared.Ratings)
 local CardData = require(ReplicatedStorage.Client.CardData)
 local CardRenderer = require(ReplicatedStorage.Client.CardRenderer)
 local UI = require(ReplicatedStorage.Client.UIKit)
@@ -769,19 +770,6 @@ end)
 -- =========================================================================================
 -- Collection + card details
 -- =========================================================================================
-local KEY_ATTRS = {
-	QB = { "THP", "THA", "SPD", "AGI", "CAR", "STR" },
-	RB = { "SPD", "AGI", "CAR", "CTH", "STR", "BLK" },
-	WR = { "SPD", "CTH", "AGI", "CAR", "STR", "BLK" },
-	TE = { "CTH", "BLK", "STR", "SPD", "AGI", "CAR" },
-	OL = { "BLK", "STR", "AGI", "SPD", "TAK", "PRS" },
-	DL = { "PRS", "STR", "TAK", "SPD", "AGI", "COV" },
-	LB = { "TAK", "COV", "PRS", "SPD", "STR", "AGI" },
-	CB = { "COV", "SPD", "AGI", "TAK", "CTH", "STR" },
-	S = { "COV", "TAK", "SPD", "AGI", "CTH", "STR" },
-}
-local ATTR_NAMES = { SPD = "Speed", AGI = "Agility", STR = "Strength", CTH = "Catching", CAR = "Carrying", THP = "Throw Power", THA = "Throw Accuracy", BLK = "Blocking", TAK = "Tackling", COV = "Coverage", PRS = "Pass Rush" }
-
 local function attrColor(v)
 	if v >= 90 then
 		return C.Accent
@@ -793,8 +781,27 @@ local function attrColor(v)
 	return Color3.fromRGB(255, 130, 80)
 end
 
-local detail = UI.glass({ Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.52), Size = UDim2.fromOffset(640, 440), ZIndex = 40 })
+local detail = UI.glass({ Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.52), Size = UDim2.fromOffset(780, 470), ZIndex = 40 })
 detail.Parent = gui
+
+-- One rating: name, value, bar (and what it does, in the roomy KEY view)
+local function ratingCell(key, v, size, showEffect, order)
+	local cell = new("Frame", { BackgroundColor3 = C.Panel2, BackgroundTransparency = 0.35, Size = size, LayoutOrder = order or 0, ZIndex = 41 }, { UI.corner(8) })
+	local w = size.X.Offset
+	UI.text({ Text = showEffect and Ratings.Names[key] or (key .. "  " .. string.upper(Ratings.Names[key] or "")), FontFace = F.Bold, TextScaled = false, TextSize = showEffect and 14 or 12, TextColor3 = showEffect and C.Text or Color3.fromRGB(205, 210, 222), Size = UDim2.fromOffset(w - 54, 18), Position = UDim2.fromOffset(10, 5), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 42 }).Parent = cell
+	UI.text({ Text = tostring(v), FontFace = F.Number, TextScaled = false, TextSize = showEffect and 22 or 18, TextColor3 = attrColor(v), Size = UDim2.fromOffset(44, 22), Position = UDim2.fromOffset(w - 52, showEffect and 4 or 3), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 42 }).Parent = cell
+	local track = new("Frame", { BackgroundColor3 = C.BG, Size = UDim2.fromOffset(w - 20, 5), Position = UDim2.fromOffset(10, showEffect and 28 or 25), ZIndex = 42 }, { UI.corner(3) })
+	local fill = new("Frame", { BackgroundColor3 = attrColor(v), Size = UDim2.fromScale(0, 1), ZIndex = 43 }, { UI.corner(3) })
+	fill.Parent = track
+	track.Parent = cell
+	TweenService:Create(fill, TweenInfo.new(0.45, Enum.EasingStyle.Quad), { Size = UDim2.fromScale(v / 99, 1) }):Play()
+	if showEffect then
+		UI.text({ Text = Ratings.Effects[key] or "", FontFace = F.Medium, TextScaled = false, TextSize = 11, TextColor3 = C.Muted, Size = UDim2.fromOffset(w - 20, 14), Position = UDim2.fromOffset(10, 37), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 42 }).Parent = cell
+	end
+	return cell
+end
+
+local detailView = "KEY"
 
 local function openCard(entry)
 	detail:ClearAllChildren()
@@ -804,38 +811,91 @@ local function openCard(entry)
 	local tierColor = GameConfig.TierColors[d.card.tier]
 	detail:FindFirstChildOfClass("UIStroke").Color = tierColor
 	local face = CardRenderer.Create(d)
-	face.Size = UDim2.fromOffset(260, 390)
-	face.Position = UDim2.fromOffset(22, 25)
+	face.Size = UDim2.fromOffset(270, 405)
+	face.Position = UDim2.fromOffset(22, 32)
 	face.ZIndex = 41
 	face.Parent = detail
-	local x = 305
-	UI.text({ Text = string.upper(d.first .. " " .. d.last), FontFace = F.Heavy, TextScaled = false, TextSize = 26, Size = UDim2.fromOffset(310, 30), Position = UDim2.fromOffset(x, 26), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 41 }).Parent = detail
+	local x = 312
+	local W = 446
+	UI.text({ Text = string.upper(d.first .. " " .. d.last), FontFace = F.Display, TextScaled = false, TextSize = 30, Size = UDim2.fromOffset(W, 34), Position = UDim2.fromOffset(x, 20), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 41 }).Parent = detail
 	local team = d.team or {}
-	UI.text({ Text = ("%s  |  %s %s  |  #%s"):format(d.card.pos, team.city or "", team.name or "", tostring(d.number or "")), FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 14, Size = UDim2.fromOffset(310, 18), Position = UDim2.fromOffset(x, 60), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 41 }).Parent = detail
-	local chips = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(310, 24), Position = UDim2.fromOffset(x, 86), ZIndex = 41 }, { new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6) }) })
+	UI.text({ Text = ("%s  |  %s %s  |  #%s"):format(d.card.pos, team.city or "", team.name or "", tostring(d.number or "")), FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 14, Size = UDim2.fromOffset(W, 18), Position = UDim2.fromOffset(x, 56), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 41 }).Parent = detail
+	local chips = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(W, 24), Position = UDim2.fromOffset(x, 80), ZIndex = 41 }, { new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6) }) })
 	UI.chip(d.card.tier:upper(), tierColor, { TextColor3 = C.BG, ZIndex = 41 }).Parent = chips
 	UI.chip(d.card.program == "Week Standout" and ("WEEK " .. d.card.week .. " STANDOUT") or "BASE", C.Panel2, { ZIndex = 41 }).Parent = chips
 	UI.chip(string.upper(d.card.archetype or ""), C.Panel2, { ZIndex = 41 }).Parent = chips
 	chips.Parent = detail
-	for i, key in KEY_ATTRS[d.card.pos] or {} do
-		local v = d.card.attrs[key] or 0
-		local y = 122 + (i - 1) * 36
-		UI.text({ Text = ATTR_NAMES[key], FontFace = F.Bold, TextScaled = false, TextSize = 14, Size = UDim2.fromOffset(130, 20), Position = UDim2.fromOffset(x, y), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 41 }).Parent = detail
-		local track = new("Frame", { BackgroundColor3 = C.Panel2, Size = UDim2.fromOffset(140, 10), Position = UDim2.fromOffset(x + 130, y + 5), ZIndex = 41 }, { UI.corner(5) })
-		local fill = new("Frame", { BackgroundColor3 = attrColor(v), Size = UDim2.fromScale(0, 1), ZIndex = 42 }, { UI.corner(5) })
-		fill.Parent = track
-		track.Parent = detail
-		TweenService:Create(fill, TweenInfo.new(0.5, Enum.EasingStyle.Quad), { Size = UDim2.fromScale(v / 99, 1) }):Play()
-		UI.text({ Text = tostring(v), FontFace = F.Heavy, TextColor3 = attrColor(v), TextScaled = false, TextSize = 16, Size = UDim2.fromOffset(34, 20), Position = UDim2.fromOffset(x + 278, y), ZIndex = 41 }).Parent = detail
+
+	-- KEY (the ratings that matter at his position, with what they do) | ALL (every rating, grouped)
+	local tabs = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(W, 30), Position = UDim2.fromOffset(x, 114), ZIndex = 41 }, { new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6) }) })
+	tabs.Parent = detail
+	for _, view in { "KEY", "ALL" } do
+		UI.button({ kind = detailView == view and "blue" or "dark", text = view == "KEY" and "KEY RATINGS" or "ALL RATINGS", size = UDim2.fromOffset(130, 30), textSize = 13, z = 41 }, function()
+			if detailView ~= view then
+				detailView = view
+				openCard(entry)
+			end
+		end).Parent = tabs
 	end
+
+	local body = new("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(W, 236),
+		Position = UDim2.fromOffset(x, 152),
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness = 4,
+		ScrollBarImageColor3 = tierColor,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		ZIndex = 41,
+	})
+	body.Parent = detail
+	local attrs = d.card.attrs
+	local keySet = {}
+	for _, k in Ratings.Key[d.card.pos] or {} do
+		keySet[k] = true
+	end
+	if detailView == "KEY" then
+		new("UIGridLayout", { CellSize = UDim2.fromOffset(216, 54), CellPadding = UDim2.fromOffset(8, 6), SortOrder = Enum.SortOrder.LayoutOrder }).Parent = body
+		for i, k in Ratings.Key[d.card.pos] or {} do
+			ratingCell(k, Ratings.Get(attrs, k), UDim2.fromOffset(216, 54), true, i).Parent = body
+		end
+	else
+		new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }).Parent = body
+		-- groups that matter for his position first
+		local groups = table.clone(Ratings.Groups)
+		local function relevance(g)
+			local n = 0
+			for _, k in g.keys do
+				n += keySet[k] and 1 or 0
+			end
+			return n
+		end
+		table.sort(groups, function(a, b)
+			return relevance(a) > relevance(b)
+		end)
+		for gi, g in groups do
+			UI.text({ Text = g.name, FontFace = F.Heavy, TextScaled = false, TextSize = 12, TextColor3 = relevance(g) > 0 and tierColor or C.Muted, Size = UDim2.new(1, 0, 0, 16), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = gi * 2 - 1, ZIndex = 41 }).Parent = body
+			local grid = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -8, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = gi * 2, ZIndex = 41 }, {
+				new("UIGridLayout", { CellSize = UDim2.fromOffset(212, 36), CellPadding = UDim2.fromOffset(8, 6), SortOrder = Enum.SortOrder.LayoutOrder }),
+			})
+			for i, k in g.keys do
+				local cell = ratingCell(k, Ratings.Get(attrs, k), UDim2.fromOffset(212, 36), false, i)
+				cell.Parent = grid
+			end
+			grid.Parent = body
+		end
+	end
+
 	local starting = lineupSlotOf(entry.uid)
 	if starting then
-		UI.text({ Text = "STARTING AT " .. starting, FontFace = F.Heavy, TextColor3 = C.Gold, TextScaled = false, TextSize = 13, Size = UDim2.fromOffset(310, 16), Position = UDim2.fromOffset(x, 340), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 41 }).Parent = detail
+		UI.text({ Text = "STARTING AT " .. starting, FontFace = F.Heavy, TextColor3 = C.Gold, TextScaled = false, TextSize = 13, Size = UDim2.fromOffset(200, 16), Position = UDim2.fromOffset(x + W - 200, 398), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 41 }).Parent = detail
 	end
 	local value = GameConfig.QuickSell[d.card.tier] or 0
 	local armed = false
 	local sell
-	sell = UI.button({ kind = "gold", icon = "coin", text = "QUICK SELL  " .. UI.commas(value), size = UDim2.fromOffset(200, 44), position = UDim2.fromOffset(x, 364), textSize = 15, z = 41 }, function()
+	sell = UI.button({ kind = "gold", icon = "coin", text = "QUICK SELL  " .. UI.commas(value), size = UDim2.fromOffset(200, 44), position = UDim2.fromOffset(x, 400), textSize = 15, z = 41 }, function()
 		if not armed then
 			armed = true
 			UI.setButton(sell, "TAP TO CONFIRM", "danger")
@@ -846,7 +906,7 @@ local function openCard(entry)
 		toast(res.ok and ("Sold for " .. UI.commas(res.coins) .. " Coins") or (res.err or "Couldn't sell"), res.ok and C.Gold or C.Red)
 	end)
 	sell.Parent = detail
-	UI.button({ kind = "dark", text = "CLOSE", size = UDim2.fromOffset(100, 44), position = UDim2.fromOffset(x + 210, 364), textSize = 15, z = 41 }, function()
+	UI.button({ kind = "dark", text = "CLOSE", size = UDim2.fromOffset(100, 44), position = UDim2.fromOffset(x + 210, 400), textSize = 15, z = 41 }, function()
 		detail.Visible = false
 	end).Parent = detail
 	detail.Visible = true

@@ -12,6 +12,7 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local MatchConfig = require(ReplicatedStorage.Shared.MatchConfig)
 local Assets = require(ReplicatedStorage.Shared.Assets)
+local Ratings = require(ReplicatedStorage.Shared.Ratings)
 
 local Npc = {}
 Npc.__index = Npc
@@ -302,11 +303,15 @@ function Npc.new(slotId, side, card, info, primary, secondary, parent)
 	self.side = side -- "Offense" / "Defense"
 	self.info = info or { last = "" }
 	self.card = card
-	self.attrs = card.attrs
-	self.speed = MatchConfig.SpeedFor(card.attrs.SPD)
+	self.attrs = Ratings.Wrap(card.attrs)
+	self.speed = MatchConfig.SpeedFor(self.attrs.SPD)
+	self.rampTime = MatchConfig.RampTime(self.attrs.ACC)
+	self.accelFrom = 0
 	self.stunUntil = 0
 	self.engagedUntil = 0
 	self.engageFactor = 0
+	self.slowUntil = 0
+	self.slowFactor = 1
 	self.nextThink = 0
 	self.target = nil
 
@@ -408,6 +413,7 @@ function Npc:Place(cf)
 	self.target = nil
 	self.stunUntil = 0
 	self.engagedUntil = 0
+	self.slowUntil = 0
 	if self.runTrack and self.runTrack.IsPlaying then
 		self.runTrack:Stop(0.1)
 	end
@@ -443,16 +449,21 @@ function Npc:Hide(hidden)
 	end
 end
 
--- Move toward a world position at this NPC's speed, slowed when blocked/engaged.
+-- Move toward a world position at this NPC's speed: builds up to top speed (ACC) from the
+-- snap or after being knocked off stride, slowed while blocked/jammed or making a cut.
 function Npc:MoveTo(pos, now)
 	if self.hidden then
 		return
 	end
-	local speed = self.speed
+	local speed = self.speed * MatchConfig.Ramp(self.rampTime, now - self.accelFrom)
 	if now < self.stunUntil then
 		speed = 0
+		self.accelFrom = self.stunUntil
 	elseif now < self.engagedUntil then
 		speed *= (1 - self.engageFactor)
+	end
+	if now < self.slowUntil then
+		speed *= self.slowFactor
 	end
 	self.humanoid.WalkSpeed = speed
 	if speed > 0 then

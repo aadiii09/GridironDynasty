@@ -52,31 +52,131 @@ POS_MAP = {
     "S": "S", "FS": "S", "SS": "S",
 }
 OFFENSE = {"QB", "RB", "WR", "TE", "OL"}
-ATTRS = ["SPD", "AGI", "STR", "CTH", "CAR", "THP", "THA", "BLK", "TAK", "COV", "PRS"]
-
-# Attribute offsets from OVR for each position (key attributes near 0, off-role very negative).
-TEMPLATE = {
-    "QB": dict(SPD=-14, AGI=-10, STR=-20, CTH=-40, CAR=-18, THP=0, THA=0, BLK=-50, TAK=-55, COV=-60, PRS=-60),
-    "RB": dict(SPD=0, AGI=0, STR=-6, CTH=-10, CAR=0, THP=-50, THA=-55, BLK=-22, TAK=-45, COV=-55, PRS=-55),
-    "WR": dict(SPD=0, AGI=-1, STR=-18, CTH=0, CAR=-10, THP=-50, THA=-55, BLK=-30, TAK=-50, COV=-45, PRS=-60),
-    "TE": dict(SPD=-10, AGI=-10, STR=-4, CTH=-3, CAR=-12, THP=-55, THA=-60, BLK=-6, TAK=-45, COV=-55, PRS=-50),
-    "OL": dict(SPD=-35, AGI=-20, STR=0, CTH=-60, CAR=-60, THP=-65, THA=-65, BLK=0, TAK=-45, COV=-65, PRS=-40),
-    "DL": dict(SPD=-16, AGI=-12, STR=0, CTH=-55, CAR=-60, THP=-65, THA=-65, BLK=-35, TAK=-4, COV=-45, PRS=0),
-    "LB": dict(SPD=-8, AGI=-8, STR=-6, CTH=-35, CAR=-55, THP=-65, THA=-65, BLK=-40, TAK=0, COV=-8, PRS=-8),
-    "CB": dict(SPD=0, AGI=0, STR=-22, CTH=-18, CAR=-45, THP=-65, THA=-65, BLK=-50, TAK=-14, COV=0, PRS=-45),
-    "S":  dict(SPD=-3, AGI=-4, STR=-14, CTH=-20, CAR=-50, THP=-65, THA=-65, BLK=-45, TAK=-3, COV=-2, PRS=-30),
+# Football attributes, grouped the way the card detail screen shows them.
+ATTR_GROUPS = {
+    "Physical": ["SPD", "ACC", "AGI", "STR", "AWR"],
+    "Passing": ["THP", "SAC", "MAC", "DAC", "RUN", "TUP"],
+    "Ball Carrier": ["CAR", "TRK", "ELU", "BCV", "SFA", "JKM", "SPM"],
+    "Receiving": ["CTH", "CIT", "SPC", "SRR", "MRR", "DRR", "RLS"],
+    "Blocking": ["PBK", "PBP", "PBF", "RBK", "RBP", "RBF"],
+    "Defense": ["TAK", "POW", "BSH", "PMV", "FMV", "PUR", "PRC", "MCV", "ZCV", "PRS"],
 }
-# Archetype = the label of whichever key attribute beats its template by the most.
+ATTRS = [a for group in ATTR_GROUPS.values() for a in group]
+SWING_SCALE = 1.7  # how strongly real stats separate players of the same OVR
+ATTR_SCHEMA = 2  # bump when the attribute list changes; older cards get new attributes, same OVR
+
+# Offset from OVR for each attribute: a per-group default, then per-attribute overrides.
+# Attributes within 6 of OVR are the position's core; their average is kept equal to OVR.
+_G = ["Physical", "Passing", "Ball Carrier", "Receiving", "Blocking", "Defense"]
+_GROUP_OFFSETS = {
+    "QB": [-12, 0, -30, -45, -55, -60],
+    "RB": [0, -60, 0, -12, -30, -50],
+    "WR": [0, -60, -14, 0, -38, -55],
+    "TE": [-8, -62, -20, -4, -6, -50],
+    "OL": [-30, -65, -55, -60, 0, -45],
+    "DL": [-14, -65, -55, -58, -35, 0],
+    "LB": [-6, -65, -50, -40, -40, 0],
+    "CB": [0, -65, -40, -22, -50, 0],
+    "S":  [-3, -65, -45, -24, -45, 0],
+}
+_OVERRIDES = {
+    "QB": dict(AWR=0, SPD=-14, STR=-20, ELU=-22, JKM=-26),
+    "RB": dict(STR=-6, AWR=-6, CTH=-8, RLS=-25, PBK=-18),
+    "WR": dict(STR=-18, AWR=-6, CAR=-8, ELU=-6, JKM=-6, CIT=-4, SPC=-4),
+    "TE": dict(STR=-2, AWR=-4, TRK=-8, SFA=-10, CAR=-10, DRR=-12, RLS=-10, PBF=-10, RBF=-10, SPC=-8),
+    "OL": dict(STR=0, AWR=-2, AGI=-18, ACC=-20, POW=-30, BSH=-30),
+    "DL": dict(STR=0, AWR=-6, ACC=-8, TAK=-4, POW=-6, PUR=-6, PRC=-6, MCV=-50, ZCV=-45, PRS=-45),
+    "LB": dict(STR=-6, AWR=0, POW=-2, BSH=-2, PMV=-12, FMV=-12, MCV=-10, ZCV=-4, PRS=-20),
+    "CB": dict(STR=-20, AWR=-4, CTH=-14, TAK=-14, POW=-16, BSH=-30, PMV=-45, FMV=-40, PUR=-6, PRC=-4, PRS=-2),
+    "S":  dict(STR=-12, AWR=0, CTH=-16, TAK=-2, POW=-2, BSH=-16, PMV=-30, FMV=-30, MCV=-6, PRS=-12),
+}
+TEMPLATE = {
+    pos: {a: _OVERRIDES[pos].get(a, offs[_G.index(g)]) for g, attrs in ATTR_GROUPS.items() for a in attrs}
+    for pos, offs in _GROUP_OFFSETS.items()
+}
+
+# How real stats and combine results move each attribute: (feature, swing). A player at the
+# top of his position in that feature gets +swing/2, the bottom gets -swing/2.
+_PHYS = {
+    "SPD": [("forty", 16)], "ACC": [("forty", 8), ("shuttle", 6), ("broad", 4)],
+    "AGI": [("cone", 10), ("shuttle", 6)], "STR": [("weight", 10), ("bench", 10)],
+    "AWR": [("exp", 14), ("snap_share", 6)],
+}
+_REC = {
+    "CTH": [("catch_rate", 16)], "CIT": [("catch_rate", 6), ("weight", 8), ("re_fdr", 8)],
+    "SPC": [("vertical", 10), ("td_tgt", 8), ("re_long", 6)],
+    "SRR": [("catch_rate", 8), ("re_short", 10)], "MRR": [("re_epa", 10), ("re_fdr", 8)],
+    "DRR": [("re_adot", 12), ("re_long", 8)], "RLS": [("tshare", 12), ("weight", 4)],
+    "ELU": [("yac", 12)], "BCV": [("yac", 8), ("re_epa", 4)], "JKM": [("yac", 8), ("cone", 6)],
+    "SPM": [("yac", 6), ("shuttle", 6)], "SPD": [("forty", 16), ("re_long", 8), ("yac", 4)],
+}
+_DEF_BACK = {
+    "TAK": [("d_tk", 14)], "POW": [("d_ff", 10), ("weight", 6)], "PUR": [("d_tk", 8), ("forty", 6)],
+    "PRC": [("d_int", 8), ("d_tfl", 4), ("exp", 6)], "BSH": [("d_tfl", 10)], "PRS": [("weight", 10), ("d_pd", 6)],
+    "CTH": [("d_int", 14)], "SPC": [("d_int", 8), ("vertical", 6)],
+}
+INFLUENCE = {
+    "QB": {
+        "THP": [("qb_aya", 12), ("qb_deep", 10)], "SAC": [("qb_cmp", 14), ("qb_cpoe", 6)],
+        "MAC": [("qb_cpoe", 12), ("qb_epa", 8)], "DAC": [("qb_deep", 12), ("qb_cpoe", 6), ("qb_intr", 6)],
+        "RUN": [("ru_ypg", 12), ("qb_epa", 6)], "TUP": [("qb_sackr", 14), ("qb_epa", 6)],
+        "AWR": [("qb_intr", 8), ("qb_epa", 6), ("exp", 10)], "SPD": [("ru_ypg", 14), ("forty", 10)],
+        "ACC": [("ru_ypg", 8), ("forty", 6)], "AGI": [("ru_ypg", 8), ("cone", 6)],
+        "ELU": [("ru_ypg", 16)], "BCV": [("ru_epa", 10)], "CAR": [("qb_fum", 10)],
+    },
+    "RB": {
+        **_PHYS,
+        "CAR": [("ru_fum", 16)], "TRK": [("weight", 14), ("ru_tdc", 6), ("ru_fdr", 6)],
+        "ELU": [("ru_long", 12), ("ru_ypc", 8)], "BCV": [("ru_epa", 12), ("ru_fdr", 8)],
+        "SFA": [("weight", 12), ("ru_fdr", 6)], "JKM": [("cone", 10), ("ru_long", 8), ("ru_ypc", 4)],
+        "SPM": [("ru_ypc", 10), ("shuttle", 6)], "SPD": [("forty", 16), ("ru_long", 6)],
+        "CTH": [("catch_rate", 10), ("re_ypg", 8)], "SRR": [("re_ypg", 10)], "MRR": [("re_ypg", 8)],
+        "RLS": [("re_ypg", 6)], "PBK": [("weight", 10)], "PBP": [("weight", 8)], "PBF": [("cone", 6)],
+    },
+    "WR": {**_PHYS, **_REC},
+    "TE": {**_PHYS, **_REC, "PBK": [("tshare_inv", 12), ("weight", 8)], "RBK": [("tshare_inv", 12), ("weight", 8)],
+           "PBP": [("weight", 10)], "RBP": [("weight", 10), ("bench", 6)], "TRK": [("weight", 10), ("yac", 6)],
+           "SFA": [("weight", 8), ("yac", 6)]},
+    "OL": {
+        **_PHYS,
+        "PBK": [("team_pass", 14), ("snap_share", 6)], "PBP": [("weight", 12), ("bench", 6), ("team_pass", 4)],
+        "PBF": [("cone", 8), ("shuttle", 6), ("team_pass", 4)], "RBK": [("team_rush", 14), ("snap_share", 6)],
+        "RBP": [("weight", 12), ("bench", 6), ("team_rush", 4)], "RBF": [("cone", 8), ("forty", 6), ("team_rush", 4)],
+    },
+    "DL": {
+        **_PHYS,
+        "PMV": [("d_sk", 10), ("weight", 10), ("bench", 6)], "FMV": [("d_qbh", 12), ("d_sk", 6), ("forty", 8)],
+        "BSH": [("d_tfl", 12), ("weight", 8)], "TAK": [("d_tk", 12)], "POW": [("d_ff", 8), ("weight", 8)],
+        "PUR": [("d_tk", 10), ("forty", 6)], "PRC": [("d_tfl", 8), ("exp", 6)],
+    },
+    "LB": {
+        **_PHYS,
+        "TAK": [("d_tk", 14)], "POW": [("d_ff", 8), ("weight", 8)], "BSH": [("d_tfl", 10), ("weight", 6)],
+        "PMV": [("d_sk", 12), ("weight", 6)], "FMV": [("d_sk", 8), ("d_qbh", 8)], "PUR": [("d_tk", 10), ("forty", 6)],
+        "PRC": [("d_tfl", 6), ("d_int", 6), ("exp", 6)], "MCV": [("d_pd", 10), ("forty", 6)],
+        "ZCV": [("d_pd", 8), ("d_int", 10)],
+    },
+    "CB": {**_PHYS, **_DEF_BACK, "MCV": [("d_pd", 12), ("forty", 8)], "ZCV": [("d_int", 14), ("d_pd", 6)]},
+    "S":  {**_PHYS, **_DEF_BACK, "MCV": [("d_pd", 10), ("forty", 6)], "ZCV": [("d_int", 12), ("d_pd", 8)],
+           "TAK": [("d_tk", 14)], "PUR": [("d_tk", 10), ("forty", 6)], "PRS": [("weight", 8)]},
+}
+
+# Archetype = the attribute set where a player stands out most compared with others at his position.
 ARCHETYPES = {
-    "QB": [("THP", "Gunslinger"), ("THA", "Field General"), ("SPD", "Dual Threat")],
-    "RB": [("SPD", "Breakaway Back"), ("STR", "Power Back"), ("CTH", "Receiving Back"), ("AGI", "Elusive Back")],
-    "WR": [("SPD", "Deep Threat"), ("CTH", "Possession Receiver"), ("AGI", "Elite Route Runner")],
-    "TE": [("CTH", "Vertical Threat"), ("BLK", "Blocking TE"), ("STR", "Hybrid TE")],
-    "OL": [("STR", "Road Grader"), ("AGI", "Pass Protector"), ("BLK", "Anchor")],
-    "DL": [("PRS", "Pass Rusher"), ("STR", "Run Stopper"), ("SPD", "Speed Rusher")],
-    "LB": [("TAK", "Thumper"), ("COV", "Coverage Backer"), ("PRS", "Blitzer")],
-    "CB": [("COV", "Lockdown Corner"), ("SPD", "Ballhawk"), ("TAK", "Physical Corner")],
-    "S":  [("TAK", "Enforcer"), ("COV", "Center Fielder"), ("SPD", "Hybrid Safety")],
+    "QB": [("Strong Arm", ["THP", "DAC"]), ("Field General", ["SAC", "MAC", "AWR"]),
+           ("Scrambler", ["SPD", "RUN", "ELU"]), ("Improviser", ["TUP", "RUN", "AGI"])],
+    "RB": [("Power Back", ["TRK", "SFA", "STR"]), ("Elusive Back", ["ELU", "JKM", "SPM", "AGI"]),
+           ("Receiving Back", ["CTH", "SRR", "MRR"]), ("Speed Back", ["SPD", "ACC"])],
+    "WR": [("Deep Threat", ["SPD", "DRR"]), ("Route Runner", ["SRR", "MRR", "RLS"]),
+           ("Physical", ["CIT", "SPC", "STR"]), ("Slot", ["AGI", "ACC", "ELU"])],
+    "TE": [("Vertical Threat", ["SPD", "DRR", "SPC"]), ("Possession", ["CTH", "CIT", "SRR"]),
+           ("Blocking", ["RBK", "PBK", "STR"])],
+    "OL": [("Pass Protector", ["PBK", "PBF"]), ("Power", ["RBP", "PBP", "STR"]), ("Agile", ["RBF", "PBF", "AGI"])],
+    "DL": [("Power Rusher", ["PMV", "STR"]), ("Speed Rusher", ["FMV", "SPD", "ACC"]), ("Run Stopper", ["BSH", "TAK"])],
+    "LB": [("Field General", ["PRC", "AWR", "ZCV"]), ("Pass Coverage", ["MCV", "ZCV", "SPD"]),
+           ("Run Stopper", ["TAK", "BSH", "PUR"]), ("Power Rusher", ["PMV", "FMV"])],
+    "CB": [("Man to Man", ["MCV", "PRS", "SPD"]), ("Zone", ["ZCV", "PRC"]), ("Slot", ["AGI", "ACC", "MCV"])],
+    "S":  [("Zone", ["ZCV", "PRC", "SPD"]), ("Run Support", ["TAK", "POW", "PUR"]), ("Hybrid", ["MCV", "BSH", "AWR"])],
 }
 JERSEY_RANGES = {
     "QB": [(1, 19)], "RB": [(0, 49)], "WR": [(0, 19), (80, 89)], "TE": [(80, 89), (40, 49)],
@@ -186,15 +286,18 @@ def build_pool(stats, roster, snaps, combine, team_map):
             (pl.col("rushing_epa").fill_null(0).sum() / pl.col("carries").fill_null(0).sum()).alias("team_rush_epa"),
         )
         .with_columns(
-            ((-pl.col("sack_rate")).rank() / pl.len() * 0.5 + pl.col("team_rush_epa").rank() / pl.len() * 0.5).alias("team_ol")
+            ((-pl.col("sack_rate")).rank() / pl.len() * 0.5 + pl.col("team_rush_epa").rank() / pl.len() * 0.5).alias("team_ol"),
+            (-pl.col("sack_rate")).alias("team_pass"),
+            pl.col("team_rush_epa").alias("team_rush"),
         )
-        .select("team", "team_ol")
+        .select("team", "team_ol", "team_pass", "team_rush")
     )
     df = df.join(team_ol, on="team", how="left")
 
-    # combine forty (speed hint)
-    forty = combine.filter(pl.col("forty").is_not_null()).select(pl.col("pfr_id"), pl.col("forty")).unique("pfr_id")
-    df = df.join(forty, on="pfr_id", how="left")
+    # combine testing (speed, quickness, strength, leaping)
+    drills = ["forty", "cone", "shuttle", "bench", "vertical", "broad_jump"]
+    comb = combine.filter(pl.col("pfr_id").is_not_null()).select(["pfr_id"] + drills).unique("pfr_id")
+    df = df.join(comb, on="pfr_id", how="left").rename({"broad_jump": "broad"})
 
     # qualification: real role on the field
     g = pl.col("games").clip(lower_bound=1)
@@ -224,12 +327,32 @@ def build_pool(stats, roster, snaps, combine, team_map):
         (pl.col("def_interceptions") / g).alias("d_int"),
         (pl.col("def_fumbles_forced") / g).alias("d_ff"),
         pl.col("draft_number").cast(pl.Float64).fill_null(300.0).alias("pick"),
+        # extra detail for position attributes
+        (pl.col("passing_cpoe")).alias("qb_cpoe"),
+        (pl.col("passing_20") / pl.col("attempts").clip(lower_bound=1)).alias("qb_deep"),
+        (pl.col("sacks_suffered") / (pl.col("attempts") + pl.col("sacks_suffered")).clip(lower_bound=1)).alias("qb_sackr"),
+        ((pl.col("sack_fumbles") + pl.col("rushing_fumbles")) / (pl.col("attempts") + pl.col("carries")).clip(lower_bound=1)).alias("qb_fum"),
+        (pl.col("rushing_yards") / pl.col("carries").clip(lower_bound=1)).alias("ru_ypc"),
+        (pl.col("rushing_20") / pl.col("carries").clip(lower_bound=1)).alias("ru_long"),
+        (pl.col("rushing_first_downs") / pl.col("carries").clip(lower_bound=1)).alias("ru_fdr"),
+        (pl.col("rushing_tds") / pl.col("carries").clip(lower_bound=1)).alias("ru_tdc"),
+        ((pl.col("rushing_fumbles") + pl.col("receiving_fumbles")) / (pl.col("carries") + pl.col("receptions")).clip(lower_bound=1)).alias("ru_fum"),
+        (pl.col("receiving_air_yards") / pl.col("targets").clip(lower_bound=1)).alias("re_adot"),
+        (-pl.col("receiving_air_yards") / pl.col("targets").clip(lower_bound=1)).alias("re_short"),
+        (pl.col("receiving_20") / pl.col("receptions").clip(lower_bound=1)).alias("re_long"),
+        (pl.col("receiving_first_downs") / pl.col("targets").clip(lower_bound=1)).alias("re_fdr"),
+        (pl.col("receiving_tds") / pl.col("targets").clip(lower_bound=1)).alias("td_tgt"),
+        (-pl.col("target_share") / g).alias("tshare_inv"),
+        pl.col("years_exp").cast(pl.Float64).alias("exp"),
     )
 
     feats = ["qb_epa", "qb_ypg", "qb_tdpg", "qb_intr", "qb_aya", "qb_cmp", "ru_ypg", "ru_epa", "td_pg", "re_ypg",
              "re_epa", "catch_rate", "tshare", "yac", "d_sk", "d_qbh", "d_tfl", "d_tk", "d_pd", "d_int", "d_ff",
-             "snap_share", "weight", "forty", "team_ol"]
-    lower_better = {"qb_intr", "forty"}
+             "snap_share", "weight", "forty", "team_ol",
+             "qb_cpoe", "qb_deep", "qb_sackr", "qb_fum", "ru_ypc", "ru_long", "ru_fdr", "ru_tdc", "ru_fum",
+             "re_adot", "re_short", "re_long", "re_fdr", "td_tgt", "tshare_inv", "exp", "team_pass", "team_rush",
+             "cone", "shuttle", "bench", "vertical", "broad"]
+    lower_better = {"qb_intr", "forty", "cone", "shuttle", "qb_sackr", "qb_fum", "ru_fum"}
     df = df.with_columns([pct_rank(f, desc=f not in lower_better) for f in feats] + [pct_rank("pick", desc=False)])
 
     P = lambda c: pl.col(c + "_p")
@@ -252,65 +375,52 @@ def build_pool(stats, roster, snaps, combine, team_map):
 
 
 def make_attrs(row: dict, ovr: int, seed: str) -> dict:
+    """Every attribute = OVR + position template + what this player's real stats and combine
+    results say about it + a little noise. Core attributes are then re-centred on OVR, so the
+    OVR stays honest while players of the same OVR still play very differently."""
     grp = row["grp"]
     rng = random.Random(seed)
     tpl = TEMPLATE[grp]
-    a = {k: ovr + tpl[k] + rng.uniform(-3, 3) for k in ATTRS}
     p = lambda c: (row.get(c + "_p") if row.get(c + "_p") is not None else 0.5) - 0.5  # -0.5..0.5
-
-    if row.get("forty") is not None:
-        a["SPD"] += p("forty") * 14
-        a["AGI"] += p("forty") * 6
-    a["STR"] += p("weight") * 12
-    if grp == "QB":
-        a["THP"] += p("qb_aya") * 10
-        a["THA"] += p("qb_cmp") * 10 + p("qb_epa") * 4
-        a["SPD"] += p("ru_ypg") * 16
-    elif grp == "RB":
-        a["CAR"] += p("ru_epa") * 8
-        a["CTH"] += p("re_ypg") * 14
-        a["AGI"] += p("ru_epa") * 6
-    elif grp in ("WR", "TE"):
-        a["CTH"] += p("catch_rate") * 12
-        a["AGI"] += p("re_epa") * 6
-        a["SPD"] += p("yac") * 6
-        if grp == "TE":
-            a["BLK"] += -p("tshare") * 12
-    elif grp == "DL":
-        a["PRS"] += p("d_sk") * 10
-        a["TAK"] += p("d_tk") * 8
-    elif grp == "LB":
-        a["TAK"] += p("d_tk") * 10
-        a["COV"] += p("d_pd") * 12
-        a["PRS"] += p("d_sk") * 14
-    elif grp in ("CB", "S"):
-        a["COV"] += p("d_pd") * 10 + p("d_int") * 6
-        a["TAK"] += p("d_tk") * 12
-    out = {k: clamp(v) for k, v in a.items()}
-
-    # keep OVR honest: average of the position's key attributes should sit near OVR
-    keys = [k for k, off in tpl.items() if off >= -10]
-    drift = ovr - sum(out[k] for k in keys) / len(keys)
-    for k in keys:
-        out[k] = clamp(out[k] + drift)
-    return out
+    a = {}
+    for k in ATTRS:
+        v = ovr + tpl[k] + rng.uniform(-3, 3)
+        for feat, swing in INFLUENCE[grp].get(k, []):
+            v += p(feat) * swing * SWING_SCALE
+        a[k] = v
+    # OL have no individual box-score stats: give each a personal strength in pass or run blocking
+    if grp == "OL":
+        lean = rng.uniform(-5, 5)
+        for k in ("PBK", "PBP", "PBF"):
+            a[k] += lean
+        for k in ("RBK", "RBP", "RBF"):
+            a[k] -= lean
+    core = [k for k, off in tpl.items() if off >= -6]
+    drift = ovr - sum(a[k] for k in core) / len(core)
+    return {k: clamp(v + drift if k in core else v) for k, v in a.items()}
 
 
-def assign_archetypes(new_cards: list[dict]):
-    """Archetype = the candidate attribute where this player stands out most compared with
-    others at the same position (percentile of attr - OVR), so labels vary within a position."""
+def assign_archetypes(cards: list[dict]):
+    """Archetype = the attribute set where this player stands out most compared with others at
+    the same position (percentile of mean(attrs) - OVR), so labels vary within a position."""
     by_pos: dict[str, list[dict]] = {}
-    for c in new_cards:
+    for c in cards:
         by_pos.setdefault(c["pos"], []).append(c)
     for pos, group in by_pos.items():
-        pct = {}
-        for attr, _ in ARCHETYPES[pos]:
-            devs = sorted(c["attrs"][attr] - c["ovr"] for c in group)
-            n = max(1, len(devs) - 1)
-            pct[attr] = {d: i / n for i, d in enumerate(devs)}  # last index wins on ties
+        score = {}
+        for label, keys in ARCHETYPES[pos]:
+            devs = [sum(c["attrs"][k] for k in keys) / len(keys) - c["ovr"] for c in group]
+            order = sorted(range(len(group)), key=lambda i: devs[i])
+            n = max(1, len(group) - 1)
+            for rank, i in enumerate(order):
+                score[(label, group[i]["id"])] = rank / n
         for c in group:
-            attr, label = max(ARCHETYPES[pos], key=lambda x: pct[x[0]][c["attrs"][x[0]] - c["ovr"]])
-            c["archetype"] = label
+            c["archetype"] = max(ARCHETYPES[pos], key=lambda x: score[(x[0], c["id"])])[0]
+
+
+def standout_attrs(base: dict, boost: int) -> dict:
+    """A Week Standout card lifts the player's real skills (anything near his OVR) by the boost."""
+    return {k: (min(99, v + boost) if v >= base["ovr"] - 12 else v) for k, v in base["attrs"].items()}
 
 
 def week_scores(stats: pl.DataFrame) -> pl.DataFrame:
@@ -395,6 +505,9 @@ def main():
     cards = {c["id"]: c for c in existing["cards"]} if existing else {}
     base_by_gid = {}
     new_base: list[dict] = []
+    rows_by_pid: dict = {}
+    rebuilt_extra: list[dict] = []
+    upgrade = bool(existing) and existing.get("attrSchema", 1) < ATTR_SCHEMA
     added = 0
 
     for row in pool.sort("score", descending=True).iter_rows(named=True):
@@ -412,8 +525,29 @@ def main():
                           "pos": grp, "team": team, "archetype": None, "attrs": attrs}
             new_base.append(cards[cid])
             added += 1
+        elif upgrade:  # same OVR, new attribute list
+            cards[cid]["attrs"] = make_attrs(row, cards[cid]["ovr"], cid)
+            new_base.append(cards[cid])
         base_by_gid[gid] = cards[cid]
+        rows_by_pid[pid] = row
+    if upgrade:
+        # base cards whose player no longer qualifies: rebuild from the position template alone
+        for c in cards.values():
+            if c["program"] == "Base" and c["pid"] not in rows_by_pid:
+                c["attrs"] = make_attrs({"grp": c["pos"]}, c["ovr"], c["id"])
+                new_base.append(c)
+        base_by_pid = {c["pid"]: c for c in cards.values() if c["program"] == "Base"}
+        for c in cards.values():
+            if c["program"] != "Base":
+                base = base_by_pid[c["pid"]]
+                c["attrs"] = standout_attrs(base, c["ovr"] - base["ovr"])
+                c["archetype"] = None
+                rebuilt_extra.append(c)
+        print(f"  attribute list upgraded to schema {ATTR_SCHEMA}: {len(new_base) + len(rebuilt_extra)} cards rebuilt (OVRs unchanged)")
     assign_archetypes(new_base)
+    if upgrade:
+        for c in rebuilt_extra:
+            c["archetype"] = base_by_pid[c["pid"]]["archetype"]
 
     # Week Standout cards: top offensive and defensive performers of each completed week
     ws = week_scores(stats).filter(pl.col("player_id").is_in(list(base_by_gid)))
@@ -429,7 +563,7 @@ def main():
             # picks: 0-7 offense, 8-13 defense. Top 2 offense + top defender get the biggest boost.
             boost = 5 if rank in (0, 1, 8) else 3 if rank < 5 or rank in (9, 10) else 2
             ovr = min(99, base["ovr"] + boost)
-            attrs = {k: (min(99, v + boost) if v >= base["ovr"] - 12 else v) for k, v in base["attrs"].items()}
+            attrs = standout_attrs(base, boost)
             cards[cid] = {"id": cid, "pid": base["pid"], "program": "Week Standout", "week": w, "ovr": ovr,
                           "tier": tier_for(ovr), "pos": base["pos"], "team": base["team"],
                           "archetype": base["archetype"], "attrs": attrs}
@@ -444,6 +578,8 @@ def main():
         "teams": league["teams"],
         "tiers": [{"name": n, "min": m} for m, n in TIERS],
         "attrs": ATTRS,
+        "attrGroups": ATTR_GROUPS,
+        "attrSchema": ATTR_SCHEMA,
         "players": players,
         "cards": sorted(cards.values(), key=lambda c: (-c["ovr"], c["id"])),
         "credits": "Statistics derived from nflverse data (CC-BY 4.0). All names, teams and logos are fictional.",

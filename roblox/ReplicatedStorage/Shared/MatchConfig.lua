@@ -96,8 +96,20 @@ MatchConfig.DefaultControl = "S"
 MatchConfig.ControlCycle = { "S", "LB1", "LB2", "CB1", "CB2", "DL1", "DL2" }
 
 -- Card attribute -> movement speed (studs/second)
+-- (extra gain above 75 so elite speed really shows: 70 -> 16.4, 85 -> 20.3, 95 -> 23.3)
 function MatchConfig.SpeedFor(spd)
-	return 11 + math.clamp((spd or 50) - 40, 0, 60) * 0.21 -- 40 -> 11, 70 -> 17.3, 99 -> 23.4
+	spd = spd or 50
+	return 11 + math.clamp(spd - 40, 0, 60) * 0.18 + math.max(0, spd - 75) * 0.12
+end
+
+-- ACC -> seconds to reach top speed (95 -> 0.35s, 70 -> 0.6s, 50 -> 0.8s)
+function MatchConfig.RampTime(acc)
+	return math.clamp(1.3 - (acc or 50) * 0.01, 0.3, 0.9)
+end
+
+-- Fraction of top speed after `elapsed` seconds of building up (starts at 35%)
+function MatchConfig.Ramp(rampTime, elapsed)
+	return 0.35 + 0.65 * math.clamp(elapsed / rampTime, 0, 1)
 end
 
 function MatchConfig.FieldLength()

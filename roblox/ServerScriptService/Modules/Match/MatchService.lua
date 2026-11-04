@@ -5,9 +5,14 @@
 -- CPU ball: pick a defense (man / deep zone / blitz) and play one defender (Q switches to the
 --   defender nearest the ball). The CPU QB reads coverage and throws to the open man; its
 --   ball carriers dodge tacklers.
--- Every player moves and plays by his card: SPD = speed, CTH = catching, COV = coverage reaction,
--- PRS vs BLK = pass rush vs blocking, TAK vs CAR/AGI = tackling vs breaking tackles,
--- THP/THA = throw speed and accuracy.
+-- Every player moves and plays by his card's ratings (see Ratings.lua):
+--   SPD/ACC top speed and burst, THP ball speed + range, SAC/MAC/DAC accuracy by distance,
+--   TUP accuracy under pressure, RUN accuracy on the move, AWR CPU QB reads,
+--   SRR/MRR/DRR separation at the route break, RLS vs PRS press at the snap,
+--   CTH/CIT/SPC open, contested and off-target catches, MCV/ZCV man and zone coverage,
+--   PBK/PBP/PBF vs PMV/FMV pass rush, RBK/RBP/RBF vs BSH run blocking, STR power battles,
+--   TRK/SFA/JKM/SPM/ELU/BCV broken tackles and running lanes, TAK/POW/CAR tackles and fumbles,
+--   PUR pursuit angles, PRC run reads.
 --
 -- Field coordinates are always in the frame of the team with the ball (see Field.lua).
 
@@ -23,6 +28,7 @@ local PlayerData = require(ServerScriptService.Modules.PlayerData)
 local Field = require(ServerScriptService.Modules.Match.Field)
 local Npc = require(ServerScriptService.Modules.Match.Npc)
 local StoreService = require(ServerScriptService.Modules.StoreService)
+local Ratings = require(ReplicatedStorage.Shared.Ratings)
 
 local MatchService = {}
 
@@ -54,6 +60,14 @@ local function hdist(a, b)
 	return flat(a - b).Magnitude
 end
 
+local function chance(p)
+	return rng:NextNumber() < p
+end
+
+local function lerp(a, b, t)
+	return a + (b - a) * math.clamp(t, 0, 1)
+end
+
 local function weighted(options)
 	local total = 0
 	for _, o in options do
@@ -71,7 +85,7 @@ end
 
 local function fillerCard(pos)
 	local attrs = {}
-	for _, k in { "SPD", "AGI", "STR", "CTH", "CAR", "THP", "THA", "BLK", "TAK", "COV", "PRS" } do
+	for _, k in Ratings.All do
 		attrs[k] = 40
 	end
 	return { id = "FILLER", pid = "FILLER", ovr = 40, pos = pos, attrs = attrs }
@@ -143,6 +157,7 @@ local function makeAvatarUnit(m, npc)
 		attrs = npc.attrs,
 		info = npc.info,
 		speed = npc.speed,
+		rampTime = npc.rampTime,
 		stunUntil = 0,
 		engagedUntil = 0,
 		engageFactor = 0,
@@ -528,12 +543,15 @@ local function compileRoutes(m)
 			local unit = m.units.Offense[slotId]
 			local x0, y0 = m.field:ToField(unit.home)
 			local out = x0 >= 0 and 1 or -1
-			local points = {}
+			local points, depth = {}, 0
 			for _, wp in route do
 				local x = math.clamp(x0 + out * wp[1] * Y, -HALF_W + 3, HALF_W - 3)
 				table.insert(points, m.field:ToWorld(x, y0 + wp[2] * Y, 0))
+				depth = math.max(depth, wp[2])
 			end
-			routes[slotId] = { points = points, index = 1 }
+			-- short / medium / deep route: which route-running rating wins the break
+			local rr = depth <= 8 and "SRR" or depth <= 16 and "MRR" or "DRR"
+			routes[slotId] = { points = points, index = 1, rr = rr }
 		end
 	end
 	return routes
@@ -558,6 +576,7 @@ local function swapInto(m, slotId)
 	m.play.carrierCard = unit.card
 	m.play.carrierName = nameOf(unit)
 	hum.WalkSpeed = unit.speed
+	m.avatarSpeed, m.avatarRamp, m.avatarAccelFrom = unit.speed, unit.rampTime, os.clock() - unit.rampTime * 0.5
 	m.play.state = "carry"
 	setPose(qb, "block")
 	holdBall(m, "avatar")
@@ -594,36 +613,84 @@ local function switchControl(m, slotId)
 	m.controlSlot = slotId
 	m.avatarUnit = makeAvatarUnit(m, target)
 	hum.WalkSpeed = target.speed
+	m.avatarSpeed, m.avatarRamp = target.speed, target.rampTime
 end
 
 -- Play engine --------------------------------------------------------------------------------
 
 local endPlay, throwBall -- forward
 
+-- The ball carrier's ratings (the card of whoever has the ball)
+local function carrierAttrs(m)
+	local c = m.play.carrier
+	if c and c ~= "avatar" and c.attrs then
+		return c.attrs
+	end
+	return Ratings.Wrap(m.play.carrierCard and m.play.carrierCard.attrs)
+end
+
+-- A tackler arrives: the carrier answers with his best move for the angle (truck / stiff arm /
+-- juke / spin from the front, spin or pure elusiveness from behind). TAK vs that move decides it;
+-- a made tackle can jar the ball loose (POW vs CAR).
 local function attemptTackle(m, def, now)
-	local carrier = m.play.carrierCard.attrs
-	local elusive = math.max(carrier.CAR or 40, carrier.AGI or 40)
-	local p = math.clamp(0.6 + ((def.attrs.TAK or 50) - elusive) * 0.012, 0.25, 0.93)
+	local c = carrierAttrs(m)
+	local d = def.attrs
+	local cPos = carrierPos(m)
+	local vel = carrierVel(m)
+	local sack = m.play.state == "dropback"
+	local fromBehind = vel.Magnitude > 4 and flat(def:Position() - cPos):Dot(vel.Unit) < -1
+	local moves
+	if sack then
+		moves = { { "ESCAPED", math.max(c.ELU, c.AGI) - 10 } }
+	elseif fromBehind then
+		moves = { { "SPIN MOVE", c.SPM }, { "SLIPPED AWAY", (c.ELU + c.BCV) / 2 - 4 } }
+	else
+		moves = {
+			{ "TRUCKED", c.TRK + (c.STR - d.STR) * 0.25 },
+			{ "STIFF ARM", c.SFA + (c.STR - d.STR) * 0.15 },
+			{ "JUKED", c.JKM + (c.AGI - d.AGI) * 0.15 },
+			{ "SPIN MOVE", c.SPM },
+		}
+	end
+	table.sort(moves, function(x, y)
+		return x[2] > y[2]
+	end)
+	-- usually his best move, sometimes his second best
+	local pick = (#moves > 1 and chance(0.25)) and moves[2] or moves[1]
+	local moveName, move = pick[1], pick[2]
+	local tak = d.TAK + (fromBehind and 6 or 0)
+	local p = math.clamp(0.64 + (tak - move) * 0.013, 0.22, 0.94)
+	if sack then
+		p = math.clamp(0.72 + (d.TAK - move) * 0.01, 0.45, 0.96)
+	end
 	def.tackleReadyAt = now + (def.isAvatar and 0.8 or 1.4)
-	if rng:NextNumber() < p then
+	if chance(p) then
 		local pos = carrierPos(m)
 		local _, fy = m.field:ToField(pos)
 		-- the ball carrier goes down
-		local c = m.play.carrier
-		if c == "avatar" then
+		local carrier = m.play.carrier
+		if carrier == "avatar" then
 			remotes.MatchState:FireClient(m.player, { event = "fall" })
-		elseif c then
-			c:Fall()
+		elseif carrier then
+			carrier:Fall()
 		end
 		burst(m, pos - Vector3.new(0, 2.5, 0), nil, 14, "dust")
 		setPose(def, "dive", 1.2)
-		endPlay(m, m.play.state == "dropback" and "sack" or "tackle", fy, def)
+		m.play.bigHit = d.POW >= 80 and chance((d.POW - 70) / 60)
+		local pFumble = math.clamp(0.008 + (d.POW - c.CAR) * 0.0014 + (m.play.bigHit and 0.015 or 0), 0.003, 0.06)
+		if chance(pFumble) then
+			endPlay(m, "fumble", fy, def)
+		else
+			endPlay(m, sack and "sack" or "tackle", fy, def)
+		end
 	else
-		def.stunUntil = now + (def.isAvatar and 0.5 or 0.7)
+		-- beaten: the better the move beat him, the longer he's out of the play
+		def.stunUntil = now + math.clamp(0.55 + (move - tak) * 0.01, 0.4, 1)
+		log(("tackle broken: %s %d vs TAK %d (%.0f%% to tackle)"):format(moveName, move, tak, p * 100))
 		if def.isAvatar then
-			sendState(m, "MISSED TACKLE!", RED)
+			sendState(m, moveName == "ESCAPED" and "HE ESCAPED!" or (moveName .. " - MISSED TACKLE!"), RED)
 		elseif m.possession == "user" then
-			sendState(m, "BROKEN TACKLE!", GREEN)
+			sendState(m, moveName .. "!", GREEN)
 		end
 	end
 end
@@ -633,16 +700,18 @@ local function runnerMove(m, unit, now)
 	local pos = unit:Position()
 	local dir = m.field:Downfield()
 	local push = Vector3.zero
+	-- vision: good runners spot tacklers (and the open lane) earlier
+	local sight = 5 + unit.attrs.BCV * 0.07
 	for _, d in defenders(m) do
 		local offset = flat(pos - d:Position())
 		local dist = offset.Magnitude
-		-- only react to tacklers close in front of / beside the runner
-		if dist < 9 and dist > 0.1 and offset:Dot(dir) < 2 then
-			push += offset.Unit * (9 - dist) / 9
+		-- only react to tacklers in front of / beside the runner
+		if dist < sight and dist > 0.1 and offset:Dot(dir) < 2 then
+			push += offset.Unit * (sight - dist) / sight
 		end
 	end
-	-- shiftier runners (AGI) cut harder; everyone mostly runs north-south
-	local juke = math.clamp(((unit.attrs.AGI or 50) - 40) / 60, 0.15, 1) * 0.7
+	-- elusive runners cut harder; everyone mostly runs north-south
+	local juke = math.clamp((unit.attrs.ELU - 40) / 60, 0.15, 1) * 0.75
 	local steer = dir + Vector3.new(push.X, 0, push.Z) * juke
 	local target = pos + steer.Unit * 10
 	-- stay in bounds
@@ -664,6 +733,7 @@ local function cpuQbDecide(m, now)
 			pressure = true
 		end
 	end
+	local misread = (100 - qb.attrs.AWR) * 0.07 -- low awareness sometimes throws to a covered man
 	local best, bestScore, bestOpen
 	for slotId in play.routes do
 		local rcv = m.units.Offense[slotId]
@@ -672,13 +742,57 @@ local function cpuQbDecide(m, now)
 			open = math.min(open, hdist(d:Position(), rcv:Position()))
 		end
 		local _, ry = m.field:ToField(rcv:Position())
-		local score = math.min(open, 12) + (ry - m.los) * 0.05
+		local score = math.min(open, 12) + (ry - m.los) * 0.05 + rng:NextNumber(-misread, misread)
 		if not bestScore or score > bestScore then
 			best, bestScore, bestOpen = rcv, score, open
 		end
 	end
-	if best and ((t >= play.throwAt and bestOpen >= 3.5) or (pressure and t > 0.9) or t > 3.4) then
+	local poise = 0.5 + qb.attrs.TUP * 0.007 -- calm QBs stand in longer when pressured
+	if best and ((t >= play.throwAt and bestOpen >= 3.5) or (pressure and t > poise) or t > 3.4) then
 		throwBall(m, best)
+	end
+end
+
+-- A receiver breaks off his stem: crisp route runners (SRR/MRR/DRR by route depth, plus AGI)
+-- lose less speed in the cut, and a man defender he out-classes (vs MCV) bites and loses a step.
+local function routeBreak(m, unit, route, coverage, now)
+	local rr = unit.attrs[route.rr]
+	unit.slowUntil = now + math.clamp(0.5 - (rr - 50) * 0.006 - (unit.attrs.AGI - 70) * 0.002, 0.12, 0.5)
+	unit.slowFactor = 0.5
+	if m.defCall == "zone" then
+		return
+	end
+	for dSlot, oSlot in coverage do
+		if oSlot == unit.slot then
+			local d = defenderAt(m, dSlot)
+			if d and not d.isAvatar then
+				d.reactAt = math.max(d.reactAt or 0, now + math.clamp(0.2 + (rr - d.attrs.MCV) * 0.012, 0.05, 0.6))
+			end
+		end
+	end
+end
+
+-- Press at the snap (man / blitz): the corner's PRS vs the receiver's RLS. A jammed receiver is
+-- held up at the line; a whiffed jam leaves the corner a step behind.
+local function pressAtLine(m, now)
+	if m.call.run or m.defCall == "zone" then
+		return
+	end
+	for _, cb in { "CB1", "CB2" } do
+		local wrSlot = MatchConfig.Coverage[cb]
+		local wr = m.units.Offense[wrSlot]
+		local d = defenderAt(m, cb)
+		if d and wr and not wr.hidden and m.play.routes[wrSlot] then
+			local edge = d.attrs.PRS - wr.attrs.RLS
+			if chance(math.clamp(0.45 + edge * 0.025, 0.08, 0.92)) then
+				wr.engagedUntil = now + math.clamp(0.45 + edge * 0.01, 0.25, 0.75)
+				wr.engageFactor = 0.7
+				log(("press: %s jammed %s (PRS %d vs RLS %d)"):format(cb, wrSlot, d.attrs.PRS, wr.attrs.RLS))
+			else
+				d.stunUntil = now + 0.35
+				log(("press: %s beat the jam by %s (RLS %d vs PRS %d)"):format(wrSlot, cb, wr.attrs.RLS, d.attrs.PRS))
+			end
+		end
 	end
 end
 
@@ -692,6 +806,13 @@ local function think(m, now)
 	local off, def = m.units.Offense, m.units.Defense
 	local userBall = m.possession == "user"
 	local defList = defenders(m)
+	local call = m.defCall or "man"
+	-- you're a free player: the AI safety picks up the man of whoever you control
+	local coverage = MatchConfig.Coverage
+	if m.avatarUnit and coverage[m.avatarUnit.slot] then
+		coverage = table.clone(coverage)
+		coverage.S = coverage[m.avatarUnit.slot]
+	end
 
 	-- offense ---------------------------------------------------------------------------
 	for slotId, unit in off do
@@ -709,6 +830,7 @@ local function think(m, now)
 				if hdist(unit:Position(), target) < 2.5 and route.index < #route.points then
 					route.index += 1
 					target = route.points[route.index]
+					routeBreak(m, unit, route, coverage, now)
 				end
 				unit:MoveTo(target, now)
 			else
@@ -729,12 +851,19 @@ local function think(m, now)
 					local between = victim:Position() + flat(ballPos - victim:Position()).Unit * 1.5
 					unit:MoveTo(between, now)
 					if hdist(unit:Position(), victim:Position()) < 4.5 then
-						local blk = unit.attrs.BLK or 40
-						local keep
+						local b, v = unit.attrs, victim.attrs
+						local power = v.STR - b.STR -- who wins the shove
+						local keep -- how much of his speed the defender keeps while engaged
 						if play.state == "carry" then
-							keep = math.clamp(0.3 + ((victim.attrs.TAK or 50) - blk) * 0.008, 0.1, 0.6)
+							-- run block: block shedding vs the blocker's drive (RBP) on big men, reach (RBF) on quick ones
+							local blk = b.RBK * 0.5 + (v.STR >= v.AGI and b.RBP or b.RBF) * 0.5
+							keep = math.clamp(0.3 + (v.BSH - blk) * 0.009 + power * 0.002, 0.08, 0.65)
 						else
-							keep = math.clamp(0.18 + ((victim.attrs.PRS or 50) - blk) * 0.008, 0.05, 0.45)
+							-- pass rush: the rusher uses his better move; the blocker answers with anchor or feet
+							local usePower = v.PMV >= v.FMV
+							local move = usePower and v.PMV or v.FMV
+							local blk = b.PBK * 0.5 + (usePower and b.PBP or b.PBF) * 0.5
+							keep = math.clamp(0.18 + (move - blk) * 0.009 + (usePower and power * 0.002 or 0), 0.04, 0.5)
 						end
 						if victim.isAvatar then
 							keep = math.max(keep, 0.45) -- you can always fight through a block a bit
@@ -757,26 +886,21 @@ local function think(m, now)
 			deepestY, deepestX = y, x
 		end
 	end
-	local call = m.defCall or "man"
-	-- you're a free player: the AI safety picks up the man of whoever you control
-	local coverage = MatchConfig.Coverage
-	if m.avatarUnit and coverage[m.avatarUnit.slot] then
-		coverage = table.clone(coverage)
-		coverage.S = coverage[m.avatarUnit.slot]
-	end
-
 	for slotId, unit in def do
 		if not unit.hidden then
 			local target
 			local pursue = play.state == "carry"
-			local reading = pursue and play.handoffAt and now - play.handoffAt < 0.6 and slotId ~= "DL1" and slotId ~= "DL2"
+			local readTime = math.clamp(0.95 - (unit.attrs.PRC - 50) * 0.012, 0.25, 0.95)
+			local reading = pursue and play.handoffAt and now - play.handoffAt < readTime and slotId ~= "DL1" and slotId ~= "DL2"
+			local ballSkill = (call == "zone" and unit.attrs.ZCV or unit.attrs.MCV) + unit.attrs.AWR
+			local breakAfter = math.clamp(0.5 - (ballSkill - 100) * 0.005, 0.08, 0.5)
 			local isLB = slotId == "LB1" or slotId == "LB2"
 			if reading then
 				target = nil
-			elseif play.state == "air" and hdist(unit:Position(), play.air.to) < 40 then
+			elseif play.state == "air" and hdist(unit:Position(), play.air.to) < 40 and now - play.air.t0 >= breakAfter then
 				target = play.air.to
 			elseif pursue then
-				local lead = math.clamp(hdist(unit:Position(), ballPos) / unit.speed, 0, 0.8)
+				local lead = math.clamp(hdist(unit:Position(), ballPos) / unit.speed, 0, 0.8) * (0.3 + unit.attrs.PUR * 0.008)
 				target = ballPos + cVel * lead
 			elseif slotId == "DL1" or slotId == "DL2" or (call == "blitz" and isLB) then
 				target = ballPos
@@ -787,13 +911,15 @@ local function think(m, now)
 				if mark and not mark.hidden and play.routes[mark.slot] then
 					local mx, my = m.field:ToField(mark:Position())
 					if call == "zone" then
+						local zcv = unit.attrs.ZCV
 						if isLB then
-							target = m.field:ToWorld(mx * 0.6, m.los + 5 * Y, 0)
+							target = m.field:ToWorld(mx * (0.3 + zcv * 0.006), m.los + 5 * Y, 0)
 						else
-							target = m.field:ToWorld(mx, math.max(my + 2.5 * Y, m.los + 7 * Y), 0)
+							local cushion = math.clamp(3.6 - (zcv - 50) * 0.05, 1.2, 3.6)
+							target = m.field:ToWorld(mx, math.max(my + cushion * Y, m.los + 7 * Y), 0)
 						end
 					else
-						local cov = unit.attrs.COV or 50
+						local cov = unit.attrs.MCV
 						if now >= (unit.reactAt or 0) then
 							unit.coverPoint = mark:Position() + mark:Velocity() * 0.35 + m.field:Downfield() * 1.5
 							unit.reactAt = now + math.clamp(0.5 - (cov - 50) * 0.007, 0.12, 0.5)
@@ -832,9 +958,12 @@ local function updateBall(m, now)
 	return false
 end
 
+-- The ball arrives: interception chances (coverage + the defender's hands), then the catch:
+-- CTH when open, CIT with a defender on him (vs MCV/ZCV), SPC to reach off-target throws.
 local function resolveCatch(m)
 	local a = m.play.air
 	local rcv = a.target
+	local r = rcv.attrs
 	local rcvDist = hdist(rcv:Position(), a.to)
 	local nearest, sep = nil, math.huge
 	for _, d in defenders(m) do
@@ -843,27 +972,39 @@ local function resolveCatch(m)
 			nearest, sep = d, dd
 		end
 	end
+	local cov = nearest and (m.defCall == "zone" and nearest.attrs.ZCV or nearest.attrs.MCV) or 50
 	if nearest and nearest.isAvatar and sep < 3 then
 		-- you got under the throw: your best chance at a pick
-		local pInt = math.clamp(0.3 + ((nearest.attrs.COV or 50) - 60) * 0.006 + (3 - sep) * 0.08 + (rcvDist > 4 and 0.2 or 0), 0.15, 0.75)
-		if rng:NextNumber() < pInt then
+		local pInt = math.clamp(0.3 + (cov - 60) * 0.004 + (nearest.attrs.CTH - 50) * 0.004 + (3 - sep) * 0.08 + (rcvDist > 4 and 0.2 or 0), 0.12, 0.75)
+		if chance(pInt) then
 			endPlay(m, "int", nil, nearest)
 			return
 		end
 	elseif nearest and sep < 3.2 then
 		-- ~2-3% normally, ~10% into tight coverage by a good cover man, more on bad throws
-		local pInt = math.clamp(0.02 + ((nearest.attrs.COV or 50) - 60) * 0.002 + math.max(0, 2.5 - sep) * 0.04 + (rcvDist > 4 and 0.1 or 0), 0.01, 0.25)
-		if rng:NextNumber() < pInt then
+		local pInt = math.clamp(0.015 + (cov - 60) * 0.0018 + (nearest.attrs.CTH - 50) * 0.0012 + math.max(0, 2.5 - sep) * 0.04 + (rcvDist > 4 and 0.1 or 0), 0.01, 0.25)
+		if chance(pInt) then
 			endPlay(m, "int", nil, nearest)
 			return
 		end
 	end
-	if rcvDist <= 4.5 then
-		local cth = rcv.attrs.CTH or 50
+	-- spectacular catchers get to throws other receivers can't
+	local reach = 3.6 + (r.SPC - 50) * 0.035
+	if rcvDist <= reach then
 		local breakup = (nearest and nearest.isAvatar and sep < 3) and 0.15 or 0
-		local pCatch = math.clamp(0.62 + cth * 0.004 - math.max(0, 3 - sep) * 0.06 - math.max(0, rcvDist - 1.5) * 0.05 - breakup, 0.05, 0.97)
-		log(("catch check: CTH %d, ball %.1f off, nearest defender %.1f%s, chance %.0f%%"):format(cth, rcvDist, sep, nearest and nearest.isAvatar and " (you)" or "", pCatch * 100))
-		if rng:NextNumber() < pCatch then
+		local pCatch = 0.58 + r.CTH * 0.0042
+		if nearest and sep < 3 then
+			-- contested: catch in traffic vs the defender's coverage
+			pCatch -= (3 - sep) / 3 * math.clamp(0.32 + (cov - r.CIT) * 0.006, 0.08, 0.55)
+		end
+		if rcvDist > 1.5 then
+			-- off target: spectacular catch
+			pCatch -= (rcvDist - 1.5) * math.clamp(0.13 - (r.SPC - 50) * 0.0018, 0.03, 0.16)
+		end
+		pCatch = math.clamp(pCatch - breakup, 0.05, 0.97)
+		log(("catch check: CTH %d CIT %d SPC %d, ball %.1f off, defender %.1f away (cover %d)%s, chance %.0f%%"):format(
+			r.CTH, r.CIT, r.SPC, rcvDist, sep, cov, nearest and nearest.isAvatar and " (you)" or "", pCatch * 100))
+		if chance(pCatch) then
 			if m.possession == "user" then
 				swapInto(m, rcv.slot)
 				sendState(m, "CAUGHT! RUN!", GREEN)
@@ -891,19 +1032,21 @@ local function step(m)
 		return
 	end
 
-	-- your defender: slowed while a blocker is on you, frozen briefly after a missed tackle
-	if m.avatarUnit then
-		local _, hum = avatarParts(m)
-		if hum then
-			local u = m.avatarUnit
-			local speed = u.speed
+	-- your player: builds up to top speed (ACC); on defense slowed while a blocker is on you,
+	-- frozen briefly after a missed tackle
+	local _, myHum = avatarParts(m)
+	if myHum and m.avatarSpeed then
+		local speed = m.avatarSpeed * MatchConfig.Ramp(m.avatarRamp or 0.6, now - (m.avatarAccelFrom or 0))
+		local u = m.avatarUnit
+		if u then
 			if now < u.stunUntil then
 				speed *= 0.3
+				m.avatarAccelFrom = u.stunUntil
 			elseif now < u.engagedUntil then
 				speed *= (1 - u.engageFactor)
 			end
-			hum.WalkSpeed = speed
 		end
+		myHum.WalkSpeed = speed
 	end
 
 	local pos = carrierPos(m)
@@ -1007,6 +1150,9 @@ function endPlay(m, result, spotY, defender, receiver)
 		for _, x in { -20, 0, 20 } do
 			burst(m, m.field:ToWorld(x, L + ez / 2, 1), userBall and USER_SECONDARY or Color3.fromHex(m.cpu.team.secondary), 70, "confetti")
 		end
+	elseif result == "fumble" then
+		msg = userBall and ("FUMBLE! " .. nameOf(defender) .. " forced it - turnover") or ("FUMBLE! Forced by " .. nameOf(defender) .. "!")
+		color, driveOver = bad, true
 	elseif result == "int" then
 		msg = (userBall and "INTERCEPTED by " or "INTERCEPTION by ") .. nameOf(defender) .. (userBall and "" or "!")
 		color, driveOver = bad, true
@@ -1030,7 +1176,7 @@ function endPlay(m, result, spotY, defender, receiver)
 		msg, color, driveOver = "SAFETY", bad, true
 	else
 		local by = nameOf(defender)
-		local verb = result == "sack" and ("SACKED by " .. by) or result == "out" and "Out of bounds" or result == "timeout" and "Whistle" or ("Tackled by " .. by)
+		local verb = result == "sack" and ("SACKED by " .. by) or result == "out" and "Out of bounds" or result == "timeout" and "Whistle" or ((play.bigHit and "BIG HIT by " or "Tackled by ") .. by)
 		msg = ("%s  (%+d yds)"):format(verb, math.floor(yards + (yards >= 0 and 0.5 or -0.5)))
 		if userBall then
 			color = yards >= 0 and Color3.new(1, 1, 1) or Color3.fromRGB(255, 120, 90)
@@ -1084,6 +1230,13 @@ local function snap(m)
 	play.carrier = userBall and "avatar" or m.units.Offense.QB
 	play.carrierCard = m.units.Offense.QB.card
 	m.phase = "live"
+	for _, side in m.units do
+		for _, unit in side do
+			unit.accelFrom = play.t0
+			unit.slowUntil = 0
+			unit.reactAt = 0
+		end
+	end
 	-- out of the stance: linemen (and anyone staying in to block) block, everyone else runs
 	for _, side in m.units do
 		for slotId, unit in side do
@@ -1095,7 +1248,12 @@ local function snap(m)
 	if root then
 		root.Anchored = false
 		hum.WalkSpeed = userBall and m.units.Offense.QB.speed or (m.avatarUnit and m.avatarUnit.speed or 16)
+		local mine = userBall and m.units.Offense.QB or m.avatarUnit
+		m.avatarSpeed = mine and mine.speed or 16
+		m.avatarRamp = mine and mine.rampTime or 0.6
+		m.avatarAccelFrom = play.t0
 	end
+	pressAtLine(m, play.t0)
 	if m.call.run then
 		local token = m.token
 		task.delay(0.45, function()
@@ -1126,7 +1284,7 @@ function throwBall(m, rcv)
 		return
 	end
 	local qb = m.units.Offense.QB.attrs
-	local ballSpeed = 45 + (qb.THP or 50) * 0.35
+	local ballSpeed = 40 + qb.THP * 0.4 -- THP 70 -> 68, 95 -> 78 studs/s
 	-- lead the receiver along his actual route (so throws hit him after his cut)
 	local function along(t)
 		local pos = flat(rcv:Position())
@@ -1149,7 +1307,39 @@ function throwBall(m, rcv)
 		predicted = along(T)
 	end
 	local dist = hdist(predicted, from)
-	local errMag = (100 - (qb.THA or 50)) * 0.035 * math.clamp(dist / 45, 0.5, 2.5) * rng:NextNumber(0.2, 1)
+	local yards = dist / Y
+	-- accuracy for this distance: short / medium / deep, blended between
+	local acc
+	if yards <= 8 then
+		acc = qb.SAC
+	elseif yards <= 14 then
+		acc = lerp(qb.SAC, qb.MAC, (yards - 8) / 6)
+	elseif yards <= 20 then
+		acc = qb.MAC
+	elseif yards <= 26 then
+		acc = lerp(qb.MAC, qb.DAC, (yards - 20) / 6)
+	else
+		acc = qb.DAC
+	end
+	-- arm strength: past his range the ball dies and sails
+	local range = 18 + qb.THP * 0.35
+	if yards > range then
+		acc -= (yards - range) * 3
+	end
+	-- throwing on the move
+	local moving = math.clamp((carrierVel(m).Magnitude - 6) / 10, 0, 1)
+	if moving > 0 then
+		acc = lerp(acc, qb.RUN - 4, moving)
+	end
+	-- a rusher in his face
+	local closest = math.huge
+	for _, d in defenders(m) do
+		closest = math.min(closest, hdist(d:Position(), from))
+	end
+	local pressure = math.clamp((7 - closest) / 5, 0, 1)
+	acc -= pressure * (100 - qb.TUP) * 0.45
+	local errMag = (100 - math.clamp(acc, 20, 99)) * 0.038 * math.clamp(dist / 45, 0.5, 2.5) * rng:NextNumber(0.2, 1)
+	log(("throw: %.0f yds, accuracy %.0f (moving %.0f%%, pressure %.0f%%), off by %.1f"):format(yards, acc, moving * 100, pressure * 100, errMag))
 	local angle = rng:NextNumber(0, math.pi * 2)
 	local to = predicted + Vector3.new(math.cos(angle) * errMag, 0, math.sin(angle) * errMag)
 	play.air = {

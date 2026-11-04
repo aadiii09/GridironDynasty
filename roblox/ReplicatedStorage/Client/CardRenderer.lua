@@ -3,7 +3,7 @@
 -- player figure in team colors -> neon frame in the tier color -> text. Elite and Icon cards
 -- get an animated holo shimmer.
 --
---   CardRenderer.Create(info, { figure = true, shimmer = true }) -> Frame (info from CardData.Describe)
+--   CardRenderer.Create(info, { figure = true, shimmer = true, stats = true }) -> Frame (info from CardData.Describe)
 --   CardRenderer.Back(tier?) -> Frame
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,6 +11,7 @@ local TweenService = game:GetService("TweenService")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local Assets = require(ReplicatedStorage.Shared.Assets)
+local Ratings = require(ReplicatedStorage.Shared.Ratings)
 
 local CardRenderer = {}
 
@@ -263,6 +264,31 @@ function CardRenderer.Create(info, opts)
 	if card.program ~= "Base" then
 		local tag = card.program == "Week Standout" and ("WK " .. card.week .. " STANDOUT") or string.upper(card.program)
 		label({ Text = tag, FontFace = FONT_HEAVY, TextColor3 = tierColor, Size = UDim2.fromScale(0.4, 0.032), Position = UDim2.fromScale(0.545, 0.172), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 8 }).Parent = root
+	end
+
+	-- signature ratings: this player's three best ratings for his position
+	local keys = Ratings.Key[card.pos]
+	if keys and opts.stats ~= false then
+		local top = table.clone(keys)
+		table.sort(top, function(a, b)
+			return Ratings.Get(card.attrs, a) > Ratings.Get(card.attrs, b)
+		end)
+		for i = 1, 3 do
+			local k = top[i]
+			new("Frame", {
+				Name = "Stat" .. i,
+				BackgroundColor3 = Color3.fromRGB(10, 12, 18),
+				BackgroundTransparency = 0.2,
+				Size = UDim2.fromScale(0.27, 0.058),
+				Position = UDim2.fromScale(0.685, 0.235 + (i - 1) * 0.07),
+				ZIndex = 8,
+			}, {
+				new("UICorner", { CornerRadius = UDim.new(0.35, 0) }),
+				new("UIStroke", { Color = tierColor, Transparency = 0.45, Thickness = 1 }),
+				label({ Text = tostring(Ratings.Get(card.attrs, k)), FontFace = FONT_HEAVY, Size = UDim2.fromScale(0.46, 0.78), Position = UDim2.fromScale(0.05, 0.11), ZIndex = 9 }),
+				label({ Text = k, FontFace = FONT_BOLD, TextColor3 = tierColor, Size = UDim2.fromScale(0.42, 0.56), Position = UDim2.fromScale(0.52, 0.22), ZIndex = 9 }),
+			}).Parent = root
+		end
 	end
 
 	-- name plate: logo | FIRST / LAST
