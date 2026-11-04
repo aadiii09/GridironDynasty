@@ -10,6 +10,7 @@ local UserInputService = game:GetService("UserInputService")
 local MatchConfig = require(ReplicatedStorage.Shared.MatchConfig)
 local Assets = require(ReplicatedStorage.Shared.Assets)
 local UI = require(ReplicatedStorage.Client.UIKit)
+local MatchCamera = require(ReplicatedStorage.Client.MatchCamera)
 
 local player = Players.LocalPlayer
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
@@ -30,9 +31,9 @@ local function teamBox(xScale, align)
 	local box = new("Frame", { BackgroundColor3 = C.Panel2, Size = UDim2.new(0.5, -50, 0, 52), Position = UDim2.new(xScale, xScale == 0 and 8 or 42, 0, 8) }, { UI.corner(10) })
 	local logo = new("ImageLabel", { BackgroundTransparency = 1, Size = UDim2.fromOffset(40, 40), Position = align == "left" and UDim2.fromOffset(6, 6) or UDim2.new(1, -46, 0, 6) })
 	logo.Parent = box
-	local name = UI.text({ FontFace = F.Heavy, TextScaled = false, TextSize = 17, TextTruncate = Enum.TextTruncate.AtEnd, TextWrapped = false, Size = UDim2.new(1, -110, 1, 0), Position = align == "left" and UDim2.fromOffset(52, 0) or UDim2.fromOffset(58, 0), TextXAlignment = align == "left" and Enum.TextXAlignment.Left or Enum.TextXAlignment.Right })
+	local name = UI.text({ FontFace = F.Display, TextScaled = false, TextSize = 21, TextTruncate = Enum.TextTruncate.AtEnd, TextWrapped = false, Size = UDim2.new(1, -110, 1, 0), Position = align == "left" and UDim2.fromOffset(52, 0) or UDim2.fromOffset(58, 0), TextXAlignment = align == "left" and Enum.TextXAlignment.Left or Enum.TextXAlignment.Right })
 	name.Parent = box
-	local score = UI.text({ FontFace = F.Heavy, TextScaled = false, TextSize = 30, Size = UDim2.fromOffset(50, 52), Position = align == "left" and UDim2.new(1, -54, 0, 0) or UDim2.fromOffset(4, 0) })
+	local score = UI.text({ FontFace = F.Display, TextScaled = false, TextSize = 40, Size = UDim2.fromOffset(50, 52), Position = align == "left" and UDim2.new(1, -54, 0, 0) or UDim2.fromOffset(4, 0) })
 	score.Parent = box
 	local ball = new("Frame", { Visible = false, BackgroundColor3 = C.Gold, Size = UDim2.fromOffset(10, 10), AnchorPoint = Vector2.new(0.5, 0.5), Position = align == "left" and UDim2.new(1, -60, 0.5, 0) or UDim2.new(0, 60, 0.5, 0) }, { new("UICorner", { CornerRadius = UDim.new(1, 0) }) })
 	ball.Parent = box
@@ -42,7 +43,7 @@ end
 local youBox = teamBox(0, "left")
 local cpuBox = teamBox(0.5, "right")
 UI.text({ Text = "VS", FontFace = F.Heavy, TextColor3 = C.Muted, TextScaled = false, TextSize = 14, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 24), Size = UDim2.fromOffset(30, 20) }).Parent = bug
-local situation = UI.text({ FontFace = F.Heavy, TextColor3 = C.Text, TextScaled = false, TextSize = 14, Size = UDim2.new(1, -20, 0, 18), Position = UDim2.fromOffset(10, 64) })
+local situation = UI.text({ FontFace = F.Display, TextColor3 = C.Text, TextScaled = false, TextSize = 17, Size = UDim2.new(1, -20, 0, 18), Position = UDim2.fromOffset(10, 64) })
 situation.Parent = bug
 
 local quit = UI.button({ kind = "dark", text = "QUIT", size = UDim2.fromOffset(112, 42), anchor = Vector2.new(1, 0), position = UDim2.new(1, -16, 0, 66), textSize = 14 }, function()
@@ -59,7 +60,7 @@ local bannerBar = new("Frame", { BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 
 	new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 1) }) }),
 })
 bannerBar.Parent = banner
-local bannerText = UI.text({ FontFace = F.Heavy, Size = UDim2.new(0.9, 0, 0, 48), Position = UDim2.new(0.05, 0, 0, 15), TextStrokeTransparency = 0.5 })
+local bannerText = UI.text({ FontFace = F.Display, Size = UDim2.new(0.9, 0, 0, 48), Position = UDim2.new(0.05, 0, 0, 15), TextStrokeTransparency = 0.5 })
 bannerText.Parent = banner
 local bannerToken = 0
 local function showBanner(msg, colorHex)
@@ -87,7 +88,7 @@ local controls = new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UD
 	new("UIScale", { Name = "Fit" }),
 })
 controls.Parent = gui
-local hint = UI.text({ FontFace = F.Bold, TextColor3 = C.Text, TextStrokeTransparency = 0.35, TextScaled = false, TextSize = 16, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -196), Size = UDim2.new(0.9, 0, 0, 22) })
+local hint = UI.text({ FontFace = F.Display, TextColor3 = C.Text, TextStrokeTransparency = 0.35, TextScaled = false, TextSize = 16, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -196), Size = UDim2.new(0.9, 0, 0, 22) })
 hint.Parent = gui
 
 local function fit()
@@ -112,7 +113,7 @@ local function callCard(key, name, desc, diagram, color, onClick)
 	local field = new("ImageLabel", { BackgroundColor3 = Color3.fromRGB(32, 110, 56), Image = diagram or "", Size = UDim2.new(1, -16, 0, 84), Position = UDim2.fromOffset(8, 8), ScaleType = Enum.ScaleType.Fit }, { UI.corner(10) })
 	field.Parent = b
 	UI.chip(tostring(key), color, { TextColor3 = C.BG, Position = UDim2.fromOffset(14, 14), TextSize = 14 }).Parent = b
-	UI.text({ Text = name, FontFace = F.Heavy, TextColor3 = color, TextScaled = false, TextSize = 18, Size = UDim2.new(1, -16, 0, 22), Position = UDim2.fromOffset(8, 98) }).Parent = b
+	UI.text({ Text = name, FontFace = F.Display, TextColor3 = color, TextScaled = false, TextSize = 23, Size = UDim2.new(1, -16, 0, 22), Position = UDim2.fromOffset(8, 98) }).Parent = b
 	UI.text({ Text = desc, FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 12, TextWrapped = true, Size = UDim2.new(1, -20, 0, 40), Position = UDim2.fromOffset(10, 122) }).Parent = b
 	local scale = new("UIScale")
 	scale.Parent = b
@@ -136,11 +137,11 @@ end
 local finalPanel = UI.glass({ Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.52), Size = UDim2.fromOffset(440, 300), ZIndex = 20 })
 finalPanel.Parent = gui
 UI.icon("trophy", { Size = UDim2.fromOffset(56, 56), Position = UDim2.new(0.5, -28, 0, 18), ImageColor3 = C.Gold, ZIndex = 21 }).Parent = finalPanel
-local finalTitle = UI.text({ FontFace = F.Heavy, TextScaled = false, TextSize = 40, Size = UDim2.new(1, -30, 0, 46), Position = UDim2.fromOffset(15, 80), ZIndex = 21 })
+local finalTitle = UI.text({ FontFace = F.Display, TextScaled = false, TextSize = 52, Size = UDim2.new(1, -30, 0, 46), Position = UDim2.fromOffset(15, 80), ZIndex = 21 })
 finalTitle.Parent = finalPanel
 local finalScore = UI.text({ FontFace = F.Heavy, TextScaled = false, TextSize = 22, Size = UDim2.new(1, -30, 0, 28), Position = UDim2.fromOffset(15, 132), ZIndex = 21 })
 finalScore.Parent = finalPanel
-local finalCoins = UI.text({ FontFace = F.Heavy, TextColor3 = C.Gold, TextScaled = false, TextSize = 20, Size = UDim2.new(1, -30, 0, 26), Position = UDim2.fromOffset(15, 168), ZIndex = 21 })
+local finalCoins = UI.text({ FontFace = F.Number, TextColor3 = C.Gold, TextScaled = false, TextSize = 20, Size = UDim2.new(1, -30, 0, 26), Position = UDim2.fromOffset(15, 168), ZIndex = 21 })
 finalCoins.Parent = finalPanel
 UI.button({ kind = "primary", text = "BACK TO LOBBY", size = UDim2.new(1, -60, 0, 52), position = UDim2.fromOffset(30, 222), textSize = 18, z = 21 }, function()
 	MatchAction:FireServer("leave")
@@ -242,6 +243,7 @@ Remotes:WaitForChild("MatchState").OnClientEvent:Connect(function(s)
 	local main = player.PlayerGui:FindFirstChild("GridironUI")
 	if s.phase == "ended" then
 		state = nil
+		MatchCamera.Stop()
 		gui.Enabled = false
 		if main then
 			main.Enabled = true
@@ -253,6 +255,7 @@ Remotes:WaitForChild("MatchState").OnClientEvent:Connect(function(s)
 	end
 	local firstState = state == nil
 	state = s
+	MatchCamera.Update(s)
 	gui.Enabled = true
 	if main then
 		main.Enabled = false

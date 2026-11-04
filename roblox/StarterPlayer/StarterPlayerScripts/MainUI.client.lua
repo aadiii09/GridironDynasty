@@ -8,6 +8,7 @@ local TweenService = game:GetService("TweenService")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local PackConfig = require(ReplicatedStorage.Shared.PackConfig)
+local StoreConfig = require(ReplicatedStorage.Shared.StoreConfig)
 local LineupConfig = require(ReplicatedStorage.Shared.LineupConfig)
 local Assets = require(ReplicatedStorage.Shared.Assets)
 local CardData = require(ReplicatedStorage.Client.CardData)
@@ -77,9 +78,11 @@ end
 local hud = new("Frame", { Name = "HUD", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) })
 hud.Parent = gui
 
-local profile = UI.glass({ Position = UDim2.fromOffset(16, 66), Size = UDim2.fromOffset(300, 78) })
+-- profile card: headshot, name, record, team rating, VIP badge
+local profile = UI.glass({ Position = UDim2.fromOffset(16, 66), Size = UDim2.fromOffset(320, 84) })
 profile.Parent = hud
-local headshot = new("ImageLabel", { BackgroundColor3 = C.Panel2, Size = UDim2.fromOffset(58, 58), Position = UDim2.fromOffset(10, 10) }, {
+UI.flowGradient(new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, Size = UDim2.new(1, -28, 0, 3), Position = UDim2.fromOffset(14, 0), Parent = profile }, { UI.corner(2) }), C.Accent, C.Blue, C.Purple)
+local headshot = new("ImageLabel", { BackgroundColor3 = C.Panel2, Size = UDim2.fromOffset(62, 62), Position = UDim2.fromOffset(11, 11) }, {
 	new("UICorner", { CornerRadius = UDim.new(1, 0) }),
 	UI.stroke(C.Accent, 2),
 })
@@ -90,17 +93,28 @@ task.spawn(function()
 		headshot.Image = img
 	end
 end)
-UI.text({ Text = player.DisplayName, FontFace = F.Heavy, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -94, 0, 24), Position = UDim2.fromOffset(80, 10), TextXAlignment = Enum.TextXAlignment.Left }).Parent = profile
-local recordLabel = UI.text({ Text = "", FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 13, Size = UDim2.new(0, 130, 0, 22), Position = UDim2.fromOffset(80, 44), TextXAlignment = Enum.TextXAlignment.Left })
+UI.text({ Text = string.upper(player.DisplayName), FontFace = F.Display, TextScaled = false, TextSize = 24, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -96, 0, 28), Position = UDim2.fromOffset(84, 10), TextXAlignment = Enum.TextXAlignment.Left }).Parent = profile
+local recordLabel = UI.text({ Text = "", FontFace = F.Display, TextColor3 = C.Muted, TextScaled = false, TextSize = 15, Size = UDim2.new(0, 120, 0, 22), Position = UDim2.fromOffset(84, 46), TextXAlignment = Enum.TextXAlignment.Left })
 recordLabel.Parent = profile
-local teamChip = UI.chip("TEAM --", C.Accent, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 44), TextColor3 = C.BG })
+local teamChip = UI.chip("TEAM --", C.Accent, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 47), TextColor3 = C.BG })
 teamChip.Parent = profile
+local vipChip = UI.chip("VIP", C.Gold, { Visible = false, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -86, 0, 47), TextColor3 = C.BG })
+vipChip.Parent = profile
 
-local coinPill = UI.glass({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 66), Size = UDim2.fromOffset(190, 50) })
+-- coins: count-up number + "+" to buy more
+local coinPill = UI.glass({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 66), Size = UDim2.fromOffset(230, 56) })
 coinPill.Parent = hud
-UI.icon("coin", { Size = UDim2.fromOffset(32, 32), Position = UDim2.fromOffset(12, 9), ImageColor3 = C.Gold }).Parent = coinPill
-local coinsLabel = UI.text({ Text = "0", FontFace = F.Heavy, TextColor3 = C.Gold, Size = UDim2.new(1, -60, 0, 28), Position = UDim2.fromOffset(52, 11), TextXAlignment = Enum.TextXAlignment.Left })
+coinPill:FindFirstChildOfClass("UIStroke").Color = C.Gold
+coinPill:FindFirstChildOfClass("UIStroke").Transparency = 0.4
+local coinIcon = UI.icon("coin", { Size = UDim2.fromOffset(36, 36), Position = UDim2.fromOffset(12, 10), ImageColor3 = C.Gold })
+coinIcon.Parent = coinPill
+local coinsLabel = UI.text({ Text = "0", FontFace = F.Number, TextColor3 = C.Gold, TextScaled = false, TextSize = 28, Size = UDim2.new(1, -110, 0, 36), Position = UDim2.fromOffset(56, 10), TextXAlignment = Enum.TextXAlignment.Left })
 coinsLabel.Parent = coinPill
+local openStore -- forward
+local addCoins = UI.button({ kind = "gold", text = "+", size = UDim2.fromOffset(40, 40), position = UDim2.new(1, -48, 0, 8), textSize = 24, font = F.Number }, function()
+	openStore("COINS")
+end)
+addCoins.Parent = coinPill
 
 local dock = new("Frame", {
 	Name = "Dock",
@@ -114,15 +128,15 @@ local dock = new("Frame", {
 })
 dock.Parent = hud
 
-local function tile(iconName, label, color, order, onClick)
-	local t = new("TextButton", { AutoButtonColor = false, Text = "", BackgroundColor3 = C.Panel, BackgroundTransparency = 0.06, Size = UDim2.fromOffset(124, 100), LayoutOrder = order }, {
-		UI.corner(14),
-		UI.stroke(C.Stroke, 1),
-		new("UIGradient", { Rotation = 90, Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(165, 170, 185)) }),
+-- colorful gradient tile with a big white icon
+local function tile(iconName, label, color, color2, order, onClick)
+	local t = new("TextButton", { AutoButtonColor = false, Text = "", BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(132, 108), LayoutOrder = order }, {
+		UI.corner(16),
+		UI.stroke(Color3.new(1, 1, 1), 2, 0.75),
+		new("UIGradient", { Rotation = 120, Color = ColorSequence.new(color, color2) }),
 	})
-	new("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Size = UDim2.new(0.5, 0, 0, 3), Position = UDim2.fromScale(0.25, 0) }, { UI.corner(2) }).Parent = t
-	UI.icon(iconName, { Size = UDim2.fromOffset(44, 44), Position = UDim2.new(0.5, -22, 0, 14), ImageColor3 = color }).Parent = t
-	UI.text({ Text = label, FontFace = F.Heavy, TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 1, -28) }).Parent = t
+	UI.icon(iconName, { Size = UDim2.fromOffset(50, 50), Position = UDim2.new(0.5, -25, 0, 12), ImageColor3 = Color3.new(1, 1, 1) }).Parent = t
+	UI.text({ Text = label, FontFace = F.Display, TextScaled = false, TextSize = 20, TextStrokeTransparency = 0.6, Size = UDim2.new(1, 0, 0, 24), Position = UDim2.new(0, 0, 1, -34) }).Parent = t
 	local scale = new("UIScale")
 	scale.Parent = t
 	t.MouseEnter:Connect(function()
@@ -140,34 +154,37 @@ end
 local openPanel, closePanels, renderShop, renderCollection, renderLineup, startMatch
 local shopPanel, collectionPanel, lineupPanel
 
-local packsTile = tile("packs", "PACKS", C.Purple, 1, function()
-	openPanel(shopPanel)
-	renderShop()
+local packsTile = tile("packs", "STORE", Color3.fromRGB(190, 70, 255), Color3.fromRGB(255, 60, 140), 1, function()
+	openStore("PACKS")
 end)
-local freeBadge = new("Frame", { Visible = false, BackgroundColor3 = C.Red, Size = UDim2.fromOffset(16, 16), Position = UDim2.new(1, -20, 0, 6) }, { new("UICorner", { CornerRadius = UDim.new(1, 0) }), UI.stroke(C.BG, 2) })
+UI.shine(packsTile, 4.5)
+local hotBadge = UI.chip("HOT", C.Red, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 6, 0, -8), ZIndex = 5 })
+hotBadge.Parent = packsTile
+local freeBadge = UI.chip("FREE PACK!", C.Accent, { Visible = false, TextColor3 = C.BG, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -12), ZIndex = 6 })
 freeBadge.Parent = packsTile
-tile("lineup", "LINEUP", C.Gold, 2, function()
+tile("lineup", "LINEUP", Color3.fromRGB(255, 190, 40), Color3.fromRGB(255, 110, 30), 2, function()
 	openPanel(lineupPanel)
 	renderLineup()
 end)
-tile("collection", "COLLECTION", C.Blue, 3, function()
+tile("collection", "CARDS", Color3.fromRGB(40, 170, 255), Color3.fromRGB(60, 90, 255), 3, function()
 	openPanel(collectionPanel)
 	renderCollection()
 end)
 
-local playButton = UI.button({ kind = "primary", text = "PLAY", icon = "football", iconScale = 0.5, size = UDim2.fromOffset(250, 100), order = 4, textSize = 34, radius = 16 }, function()
+local playButton = UI.button({ kind = "primary", text = "PLAY", icon = "football", iconScale = 0.5, size = UDim2.fromOffset(270, 108), order = 4, textSize = 44, radius = 18 }, function()
 	startMatch()
 end)
 playButton.Parent = dock
 local playGlow = UI.stroke(C.Accent, 3, 0.2)
 playGlow.Parent = playButton
-TweenService:Create(playGlow, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Transparency = 0.85, Thickness = 6 }):Play()
-UI.text({ Text = "VS AI  -  7v7", FontFace = F.Bold, TextColor3 = Color3.fromRGB(10, 60, 36), TextScaled = false, TextSize = 13, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 1, -22), ZIndex = 2 }).Parent = playButton
+TweenService:Create(playGlow, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Transparency = 0.85, Thickness = 7 }):Play()
+UI.shine(playButton, 3)
+UI.text({ Text = "VS AI  -  7v7  -  WIN 400 COINS", FontFace = F.Display, TextColor3 = Color3.fromRGB(8, 60, 34), TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 1, -22), ZIndex = 2 }).Parent = playButton
 
 -- shrink the dock on narrow (phone) screens
 local function fitDock()
 	local w = gui.AbsoluteSize.X
-	dock.Fit.Scale = math.clamp((w - 24) / 760, 0.45, 1)
+	dock.Fit.Scale = math.clamp((w - 24) / 780, 0.45, 1)
 end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitDock)
 
@@ -189,10 +206,14 @@ local function makePanel(name, title, iconName, color)
 	}, {
 		new("UISizeConstraint", { MaxSize = Vector2.new(1120, 740) }),
 	})
-	-- header
-	new("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Size = UDim2.new(0, 120, 0, 3), Position = UDim2.fromOffset(20, 0), ZIndex = 11 }, { UI.corner(2) }).Parent = panel
-	UI.icon(iconName, { Size = UDim2.fromOffset(30, 30), Position = UDim2.fromOffset(20, 16), ImageColor3 = color, ZIndex = 11 }).Parent = panel
-	local titleLabel = UI.text({ Name = "Title", Text = title, FontFace = F.Heavy, TextScaled = false, TextSize = 26, Size = UDim2.new(1, -140, 0, 30), Position = UDim2.fromOffset(60, 16), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 11 })
+	-- header: glowing color bar, icon badge, big condensed title
+	local bar = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, Size = UDim2.new(1, -40, 0, 4), Position = UDim2.fromOffset(20, 0), ZIndex = 11 }, { UI.corner(2) })
+	new("UIGradient", { Color = ColorSequence.new(color, color:Lerp(Color3.new(1, 1, 1), 0.3)), Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.6, 0.2), NumberSequenceKeypoint.new(1, 1) }) }).Parent = bar
+	bar.Parent = panel
+	local badge = new("Frame", { BackgroundColor3 = color, Size = UDim2.fromOffset(42, 42), Position = UDim2.fromOffset(18, 12), ZIndex = 11 }, { UI.corner(12) })
+	UI.icon(iconName, { Size = UDim2.fromOffset(28, 28), Position = UDim2.fromOffset(7, 7), ImageColor3 = Color3.new(1, 1, 1), ZIndex = 12 }).Parent = badge
+	badge.Parent = panel
+	local titleLabel = UI.text({ Name = "Title", Text = title, FontFace = F.Display, TextScaled = false, TextSize = 34, Size = UDim2.new(1, -140, 0, 40), Position = UDim2.fromOffset(72, 12), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 11 })
 	titleLabel.Parent = panel
 	local close = UI.button({ kind = "dark", icon = "close", size = UDim2.fromOffset(44, 40), position = UDim2.new(1, -58, 0, 12), z = 11 }, function()
 		closePanels()
@@ -216,12 +237,17 @@ local function makePanel(name, title, iconName, color)
 	return panel, body
 end
 
+local hubOnly = {} -- hub widgets hidden while a menu is open
+
 function closePanels()
 	for _, p in panels do
 		p.Visible = false
 	end
 	backdrop.Visible = false
 	dock.Visible = true
+	for _, w in hubOnly do
+		w.Visible = true
+	end
 	UI.blur(false)
 end
 backdrop.Activated:Connect(closePanels)
@@ -232,6 +258,9 @@ function openPanel(panel)
 	end
 	backdrop.Visible = panel ~= nil
 	dock.Visible = panel == nil
+	for _, w in hubOnly do
+		w.Visible = panel == nil
+	end
 	UI.blur(panel ~= nil)
 	if panel then
 		UI.pop(panel, 0.22)
@@ -239,7 +268,7 @@ function openPanel(panel)
 end
 
 local shopBody, collectionBody, oddsBody, lineupBody
-shopPanel, shopBody = makePanel("Shop", "PACK SHOP", "packs", C.Purple)
+shopPanel, shopBody = makePanel("Shop", "STORE", "packs", Color3.fromRGB(220, 70, 220))
 collectionPanel, collectionBody = makePanel("Collection", "COLLECTION", "collection", C.Blue)
 lineupPanel, lineupBody = makePanel("Lineup", "LINEUP", "lineup", C.Gold)
 local oddsPanel
@@ -362,11 +391,15 @@ local function buyPack(pack)
 	revealPack(pack, res.cards)
 end
 
-function renderShop()
-	state.shop = Remotes.GetShop:InvokeServer()
-	shopBody:ClearAllChildren()
-	new("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8) }).Parent = shopBody
-	new("UIGridLayout", { CellSize = UDim2.fromOffset(200, 360), CellPadding = UDim2.fromOffset(16, 16), HorizontalAlignment = Enum.HorizontalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder }).Parent = shopBody
+local PACK_RIBBON = { elite = { "POPULAR", C.Blue }, dynasty = { "BEST ODDS", C.Red }, daily = { "FREE", Color3.fromRGB(20, 170, 100) } }
+local storeTab = "PACKS"
+
+local function renderPacks(body)
+	local grid = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 2, ZIndex = 12 }, {
+		new("UIGridLayout", { CellSize = UDim2.fromOffset(204, 372), CellPadding = UDim2.fromOffset(16, 16), HorizontalAlignment = Enum.HorizontalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder }),
+		new("UIPadding", { PaddingTop = UDim.new(0, 10) }),
+	})
+	grid.Parent = body
 	if state.shop.paidRandomRestricted then
 		toast("Robux packs aren't available for your account.", C.Gold)
 	end
@@ -374,32 +407,179 @@ function renderShop()
 		local info = packInfo(pack.id)
 		local tileFrame = UI.glass({ LayoutOrder = i, ZIndex = 12 })
 		tileFrame:FindFirstChildOfClass("UIStroke").Color = pack.color
-		tileFrame:FindFirstChildOfClass("UIStroke").Transparency = 0.3
+		tileFrame:FindFirstChildOfClass("UIStroke").Thickness = 2
+		UI.flowGradient(new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.82, Size = UDim2.new(1, 0, 0, 250), ZIndex = 12, Parent = tileFrame }, { UI.corner(14) }), pack.color, pack.color:Lerp(Color3.new(0, 0, 0), 0.7), pack.color)
 		local art = new("ImageLabel", {
 			BackgroundTransparency = Assets.pack ~= "" and 1 or 0,
 			BackgroundColor3 = pack.color,
 			Image = Assets.pack,
 			ImageColor3 = pack.color,
 			Size = UDim2.fromOffset(150, 218),
-			Position = UDim2.new(0.5, -75, 0, 12),
+			Position = UDim2.new(0.5, -75, 0, 14),
 			ZIndex = 13,
 		})
 		art.Parent = tileFrame
-		UI.text({ Text = string.upper(pack.name):gsub(" PACK", ""):gsub("DAILY FREE", "DAILY"), FontFace = F.Heavy, TextColor3 = C.Text, TextStrokeTransparency = 0.2, Size = UDim2.new(0.86, 0, 0, 30), Position = UDim2.new(0.07, 0, 0, 160), ZIndex = 14 }).Parent = art
-		UI.text({ Text = ("%d CARDS"):format(pack.cards), FontFace = F.Heavy, TextColor3 = C.BG, TextScaled = false, TextSize = 12, Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 0, 22), ZIndex = 14 }).Parent = art
-		UI.text({ Text = pack.blurb, FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 13, Size = UDim2.new(1, -16, 0, 18), Position = UDim2.fromOffset(8, 238), ZIndex = 13 }).Parent = tileFrame
+		UI.text({ Text = string.upper(pack.name):gsub(" PACK", ""):gsub("DAILY FREE", "DAILY"), FontFace = F.Display, TextColor3 = C.Text, TextStrokeTransparency = 0.3, Size = UDim2.new(0.9, 0, 0, 38), Position = UDim2.new(0.05, 0, 0, 152), ZIndex = 14 }).Parent = art
+		UI.text({ Text = ("%d CARDS"):format(pack.cards), FontFace = F.Display, TextColor3 = C.BG, TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 0, 22), ZIndex = 14 }).Parent = art
+		UI.shine(art, 4 + i * 0.4, 15)
+		local rb = PACK_RIBBON[pack.id]
+		if rb then
+			UI.ribbon(tileFrame, rb[1], rb[2], 16)
+		end
+		UI.text({ Text = pack.blurb, FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 13, Size = UDim2.new(1, -16, 0, 18), Position = UDim2.fromOffset(8, 244), ZIndex = 13 }).Parent = tileFrame
 		local label, ready = priceText(pack, info)
 		local kind = not ready and "disabled" or pack.currency == "Coins" and "gold" or pack.currency == "Robux" and "blue" or "primary"
-		local buy = UI.button({ kind = kind, text = label, icon = pack.currency == "Coins" and "coin" or nil, size = UDim2.new(1, -24, 0, 44), position = UDim2.fromOffset(12, 262), textSize = 16, z = 13 }, function()
+		local buy = UI.button({ kind = kind, text = label, icon = pack.currency == "Coins" and "coin" or nil, size = UDim2.new(1, -24, 0, 48), position = UDim2.fromOffset(12, 268), textSize = 18, font = F.Number, z = 13 }, function()
 			buyPack(pack)
 		end)
 		packButtons[pack.id] = buy
 		buy.Parent = tileFrame
-		UI.button({ kind = "dark", text = "VIEW ODDS", size = UDim2.new(1, -24, 0, 34), position = UDim2.fromOffset(12, 314), textSize = 13, z = 13 }, function()
+		UI.button({ kind = "dark", text = "VIEW ODDS", size = UDim2.new(1, -24, 0, 34), position = UDim2.fromOffset(12, 326), textSize = 13, z = 13 }, function()
 			openOdds(pack)
 		end).Parent = tileFrame
-		tileFrame.Parent = shopBody
+		tileFrame.Parent = grid
 	end
+end
+
+local function coinStack(parent, n, size)
+	-- a little pile of coins: bigger bundle, bigger pile
+	for k = 1, n do
+		local col = (k - 1) % 3
+		local row = math.floor((k - 1) / 3)
+		UI.icon("coin", {
+			Size = UDim2.fromOffset(size, size),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0.5, (col - 1) * size * 0.55, 0.5, -row * size * 0.32 + 10),
+			ImageColor3 = C.Gold:Lerp(Color3.new(1, 1, 1), (k % 2) * 0.15),
+			ZIndex = 13 + k,
+		}).Parent = parent
+	end
+end
+
+local function renderCoins(body)
+	local store = state.store or {}
+	local grid = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 2, ZIndex = 12 }, {
+		new("UIGridLayout", { CellSize = UDim2.fromOffset(230, 300), CellPadding = UDim2.fromOffset(16, 16), HorizontalAlignment = Enum.HorizontalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder }),
+		new("UIPadding", { PaddingTop = UDim.new(0, 10) }),
+	})
+	grid.Parent = body
+	for i, b in StoreConfig.CoinBundles do
+		local avail = false
+		for _, s in store.bundles or {} do
+			if s.id == b.id then
+				avail = s.available
+			end
+		end
+		local card = UI.glass({ LayoutOrder = i, ZIndex = 12 })
+		card:FindFirstChildOfClass("UIStroke").Color = C.Gold
+		card:FindFirstChildOfClass("UIStroke").Thickness = b.tag and 2 or 1
+		local art = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.new(1, -16, 0, 140), Position = UDim2.fromOffset(8, 8), ZIndex = 12 }, { UI.corner(12) })
+		UI.flowGradient(art, Color3.fromRGB(90, 60, 10), Color3.fromRGB(200, 140, 20), Color3.fromRGB(90, 60, 10))
+		art.Parent = card
+		coinStack(art, i + 2, 44 + i * 4)
+		UI.shine(art, 3.5 + i * 0.5, 30)
+		if b.tag then
+			UI.ribbon(card, b.tag, b.tag == "BEST VALUE" and C.Red or C.Blue, 40)
+		end
+		UI.text({ Text = UI.commas(b.coins), FontFace = F.Number, TextColor3 = C.Gold, TextScaled = false, TextSize = 36, Size = UDim2.new(1, 0, 0, 40), Position = UDim2.fromOffset(0, 154), ZIndex = 13 }).Parent = card
+		UI.text({ Text = "COINS", FontFace = F.Display, TextColor3 = C.Muted, TextScaled = false, TextSize = 16, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(0, 194), ZIndex = 13 }).Parent = card
+		local buy = UI.button({ kind = avail and "blue" or "disabled", text = avail and ("R$ " .. b.price) or (store.coinsRestricted and "UNAVAILABLE" or "COMING SOON"), size = UDim2.new(1, -24, 0, 50), position = UDim2.fromOffset(12, 232), textSize = 20, font = F.Number, z = 13 }, function()
+			local res = Remotes.PromptCoins:InvokeServer(b.id)
+			if not res.ok then
+				toast(res.err, C.Gold)
+			end
+		end)
+		buy.Parent = card
+		if avail then
+			UI.shine(buy, 3)
+		end
+		card.Parent = grid
+	end
+	-- how to earn coins for free
+	local earn = UI.glass({ Size = UDim2.new(1, -20, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 3, ZIndex = 12 }, {
+		UI.pad(14),
+		new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }),
+	})
+	UI.text({ Text = "EARN COINS FOR FREE", FontFace = F.Display, TextColor3 = C.Accent, TextScaled = false, TextSize = 22, Size = UDim2.new(1, 0, 0, 26), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 0, ZIndex = 13 }).Parent = earn
+	for i, row in StoreConfig.EarnInfo do
+		local r = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 22), LayoutOrder = i, ZIndex = 13 })
+		UI.text({ Text = row[1], FontFace = F.Bold, TextScaled = false, TextSize = 15, Size = UDim2.new(0.7, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 13 }).Parent = r
+		UI.text({ Text = row[2], FontFace = F.Number, TextColor3 = C.Gold, TextScaled = false, TextSize = 17, Size = UDim2.new(0.3, 0, 1, 0), Position = UDim2.fromScale(0.7, 0), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 13 }).Parent = r
+		r.Parent = earn
+	end
+	if state.store and state.store.vip then
+		UI.text({ Text = "VIP: your game rewards and daily bonus are doubled!", FontFace = F.Bold, TextColor3 = C.Gold, TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 20), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 99, ZIndex = 13 }).Parent = earn
+	end
+	earn.Parent = body
+end
+
+local function renderVIP(body)
+	local store = state.store or {}
+	local vip = StoreConfig.VIP
+	local card = UI.glass({ Size = UDim2.new(1, -20, 0, 330), LayoutOrder = 2, ZIndex = 12 })
+	card:FindFirstChildOfClass("UIStroke").Color = C.Gold
+	card:FindFirstChildOfClass("UIStroke").Thickness = 2
+	local hero = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.new(0.42, -12, 1, -24), Position = UDim2.fromOffset(12, 12), ZIndex = 12 }, { UI.corner(14) })
+	UI.flowGradient(hero, Color3.fromRGB(255, 196, 46), Color3.fromRGB(255, 120, 30), Color3.fromRGB(200, 60, 160))
+	UI.icon("trophy", { Size = UDim2.fromScale(0.55, 0.55), SizeConstraint = Enum.SizeConstraint.RelativeYY, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.42), ImageColor3 = Color3.new(1, 1, 1), ZIndex = 13 }).Parent = hero
+	UI.text({ Text = "VIP", FontFace = F.Display, TextColor3 = Color3.new(1, 1, 1), TextStrokeTransparency = 0.5, Size = UDim2.new(1, 0, 0.2, 0), Position = UDim2.fromScale(0, 0.74), ZIndex = 13 }).Parent = hero
+	UI.shine(hero, 3, 20)
+	hero.Parent = card
+	local right = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(0.58, -24, 1, -24), Position = UDim2.new(0.42, 12, 0, 12), ZIndex = 12 }, {
+		new("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }),
+	})
+	UI.text({ Text = vip.name, FontFace = F.Display, TextColor3 = C.Gold, TextScaled = false, TextSize = 40, Size = UDim2.new(1, 0, 0, 46), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 1, ZIndex = 13 }).Parent = right
+	UI.text({ Text = "One-time purchase, yours forever", FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 15, Size = UDim2.new(1, 0, 0, 20), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 2, ZIndex = 13 }).Parent = right
+	for i, perk in vip.perks do
+		local r = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 30), LayoutOrder = 2 + i, ZIndex = 13 })
+		new("Frame", { BackgroundColor3 = C.Accent, Size = UDim2.fromOffset(22, 22), Position = UDim2.fromOffset(0, 4), ZIndex = 13 }, { UI.corner(11), UI.text({ Text = "✓", FontFace = F.Heavy, TextColor3 = C.BG, Size = UDim2.fromScale(1, 1), ZIndex = 14 }) }).Parent = r
+		UI.text({ Text = perk, FontFace = F.Display, TextScaled = false, TextSize = 20, Size = UDim2.new(1, -34, 1, 0), Position = UDim2.fromOffset(34, 0), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 13 }).Parent = r
+		r.Parent = right
+	end
+	local owned = store.vip
+	local buy = UI.button({ kind = owned and "disabled" or (store.vipAvailable and "gold" or "disabled"), text = owned and "OWNED" or (store.vipAvailable and ("R$ " .. vip.price) or "COMING SOON"), size = UDim2.new(1, 0, 0, 56), order = 9, textSize = 24, font = F.Number, z = 13 }, function()
+		local res = Remotes.PromptVIP:InvokeServer()
+		if not res.ok then
+			toast(res.err, C.Gold)
+		end
+	end)
+	buy.Parent = right
+	if not owned then
+		UI.shine(buy, 2.5)
+	end
+	right.Parent = card
+	card.Parent = body
+end
+
+function renderShop(tab)
+	storeTab = tab or storeTab
+	state.shop = Remotes.GetShop:InvokeServer()
+	state.store = Remotes.GetStore:InvokeServer()
+	shopBody:ClearAllChildren()
+	new("UIListLayout", { Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = Enum.HorizontalAlignment.Center }).Parent = shopBody
+	new("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 10) }).Parent = shopBody
+	-- tab bar
+	local tabs = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 48), LayoutOrder = 1, ZIndex = 12 }, {
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 10), HorizontalAlignment = Enum.HorizontalAlignment.Center }),
+	})
+	for _, t in { { "PACKS", "packs", "purple" }, { "COINS", "coin", "gold" }, { "VIP", "trophy", "danger" } } do
+		UI.button({ kind = storeTab == t[1] and t[3] or "dark", text = t[1], icon = t[2], size = UDim2.fromOffset(170, 46), textSize = 20, z = 12 }, function()
+			renderShop(t[1])
+		end).Parent = tabs
+	end
+	tabs.Parent = shopBody
+	if storeTab == "COINS" then
+		renderCoins(shopBody)
+	elseif storeTab == "VIP" then
+		renderVIP(shopBody)
+	else
+		renderPacks(shopBody)
+	end
+end
+
+openStore = function(tab)
+	openPanel(shopPanel)
+	renderShop(tab)
 end
 
 -- free pack countdown + badge
@@ -870,6 +1050,248 @@ function renderLineup()
 end
 
 -- =========================================================================================
+-- Hub: featured promo carousel (left) + your top card showcase (right)
+-- =========================================================================================
+local featured = UI.glass({ Name = "Featured", Position = UDim2.fromOffset(16, 162), Size = UDim2.fromOffset(500, 230), ClipsDescendants = true })
+featured.Parent = hud
+table.insert(hubOnly, featured)
+local slideHolder = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) })
+slideHolder.Parent = featured
+local dots = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -8), Size = UDim2.fromOffset(120, 10), ZIndex = 20 }, {
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, Padding = UDim.new(0, 6) }),
+})
+dots.Parent = featured
+
+local function tierOddsText(packId)
+	local o = PackConfig.ById[packId].odds
+	return ("ICON %s%%  -  ELITE %s%%  -  EPIC %s%%"):format(o.Icon, o.Elite, o.Epic)
+end
+
+local slides = {
+	{
+		kicker = "FEATURED PACK", title = "THE DYNASTY PACK", sub = "10 CARDS  -  GUARANTEED ELITE OR BETTER",
+		detail = function() return tierOddsText("dynasty") end,
+		c1 = Color3.fromRGB(20, 160, 90), c2 = Color3.fromRGB(8, 40, 30), art = "pack", tint = Color3.fromRGB(46, 255, 140),
+		button = function() return "SHOP NOW", "primary" end,
+		action = function() openStore("PACKS") end,
+	},
+	{
+		kicker = "BEST VALUE", title = "55,000 COINS", sub = "+43% BONUS  -  OPEN 22 STARTER PACKS",
+		detail = function() return "COINS ALSO COME FROM WINS, DAILY LOGINS AND QUICK-SELLS" end,
+		c1 = Color3.fromRGB(230, 150, 20), c2 = Color3.fromRGB(70, 40, 6), art = "coins",
+		button = function() return "R$ 499", "gold" end,
+		action = function()
+			local res = Remotes.PromptCoins:InvokeServer("coins_4")
+			if not res.ok then
+				toast(res.err, C.Gold)
+			end
+		end,
+	},
+	{
+		kicker = "VIP PASS", title = "DOUBLE EVERY COIN", sub = "2X GAME REWARDS + 2X DAILY BONUS  -  FOREVER",
+		detail = function() return "ONE-TIME PURCHASE" end,
+		c1 = Color3.fromRGB(200, 60, 200), c2 = Color3.fromRGB(40, 10, 60), art = "trophy",
+		button = function()
+			if state.store and state.store.vip then
+				return "OWNED", "disabled"
+			end
+			return "R$ " .. StoreConfig.VIP.price, "purple"
+		end,
+		action = function() openStore("VIP") end,
+	},
+	{
+		kicker = "EVERY 22 HOURS", title = "FREE DAILY PACK", sub = "3 CARDS ON THE HOUSE",
+		detail = function()
+			local wait = state.shop and (state.shop.freePackReadyAt or 0) - os.time() or 0
+			return wait > 0 and ("NEXT ONE IN " .. fmtDuration(wait)) or "READY NOW!"
+		end,
+		c1 = Color3.fromRGB(40, 120, 255), c2 = Color3.fromRGB(10, 20, 60), art = "pack", tint = Color3.fromRGB(120, 130, 145),
+		button = function()
+			local ready = state.shop and os.time() >= (state.shop.freePackReadyAt or math.huge)
+			return ready and "OPEN FREE" or "VIEW PACKS", ready and "primary" or "dark"
+		end,
+		action = function()
+			local ready = state.shop and os.time() >= (state.shop.freePackReadyAt or math.huge)
+			if ready then
+				buyPack(PackConfig.ById.daily)
+			else
+				openStore("PACKS")
+			end
+		end,
+	},
+}
+
+local slideIndex = 0
+local slideButton, slideDetail
+local function showSlide(i)
+	slideIndex = i
+	local s = slides[i]
+	slideHolder:ClearAllChildren()
+	local bg = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromScale(1, 1), ZIndex = 1 }, { UI.corner(14) })
+	UI.flowGradient(bg, s.c1, s.c2, s.c1)
+	bg.Parent = slideHolder
+	-- art on the right
+	local artHolder = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(170, 210), Position = UDim2.new(1, -182, 0, 10), ZIndex = 3 })
+	artHolder.Parent = slideHolder
+	if s.art == "pack" then
+		new("ImageLabel", { BackgroundTransparency = 1, Image = Assets.pack, ImageColor3 = s.tint, Size = UDim2.fromOffset(136, 197), Position = UDim2.fromOffset(18, 6), Rotation = 8, ZIndex = 4 }).Parent = artHolder
+	elseif s.art == "coins" then
+		coinStack(artHolder, 7, 64)
+	else
+		UI.icon("trophy", { Size = UDim2.fromOffset(140, 140), Position = UDim2.fromOffset(15, 30), ImageColor3 = C.Gold, ZIndex = 4 }).Parent = artHolder
+	end
+	-- copy on the left
+	local copy = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -200, 1, -20), Position = UDim2.fromOffset(18, 14), ZIndex = 5 })
+	copy.Parent = slideHolder
+	UI.chip(s.kicker, Color3.new(0, 0, 0), { BackgroundTransparency = 0.4, TextColor3 = Color3.new(1, 1, 1), ZIndex = 6 }).Parent = copy
+	UI.text({ Text = s.title, FontFace = F.Display, TextScaled = false, TextSize = 40, TextStrokeTransparency = 0.6, Size = UDim2.new(1, 0, 0, 46), Position = UDim2.fromOffset(0, 26), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 }).Parent = copy
+	UI.text({ Text = s.sub, FontFace = F.Display, TextColor3 = Color3.fromRGB(235, 240, 250), TextScaled = false, TextSize = 16, Size = UDim2.new(1, 0, 0, 20), Position = UDim2.fromOffset(0, 74), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 }).Parent = copy
+	slideDetail = UI.text({ Text = s.detail(), FontFace = F.Bold, TextColor3 = Color3.fromRGB(220, 225, 235), TextTransparency = 0.15, TextScaled = false, TextSize = 12, TextWrapped = true, Size = UDim2.new(1, 0, 0, 30), Position = UDim2.fromOffset(0, 98), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 })
+	slideDetail.Parent = copy
+	local label, kind = s.button()
+	slideButton = UI.button({ kind = kind, text = label, size = UDim2.fromOffset(180, 50), position = UDim2.fromOffset(0, 140), textSize = 20, font = label:find("R%$") and F.Number or F.Display, z = 7 }, s.action)
+	slideButton.Parent = copy
+	UI.shine(slideButton, 2.8)
+	-- slide-in motion
+	copy.Position = UDim2.fromOffset(48, 14)
+	TweenService:Create(copy, TweenInfo.new(0.35, Enum.EasingStyle.Quint), { Position = UDim2.fromOffset(18, 14) }):Play()
+	artHolder.Position = UDim2.new(1, -140, 0, 10)
+	TweenService:Create(artHolder, TweenInfo.new(0.45, Enum.EasingStyle.Back), { Position = UDim2.new(1, -182, 0, 10) }):Play()
+	-- dots
+	dots:ClearAllChildren()
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, Padding = UDim.new(0, 6) }).Parent = dots
+	for k = 1, #slides do
+		local d = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = k == i and 0 or 0.6, Size = UDim2.fromOffset(k == i and 22 or 8, 8), ZIndex = 21 }, { UI.corner(4) })
+		d.Activated:Connect(function()
+			showSlide(k)
+		end)
+		d.Parent = dots
+	end
+end
+
+task.spawn(function()
+	while true do
+		showSlide(slideIndex % #slides + 1)
+		for _ = 1, 6 do
+			task.wait(1)
+			if slideDetail and slideDetail.Parent then
+				slideDetail.Text = slides[slideIndex].detail()
+			end
+		end
+	end
+end)
+
+-- your top card, floating on the right
+local showcase = new("Frame", { Name = "Showcase", BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -40, 0, 150), Size = UDim2.fromOffset(220, 360) })
+showcase.Parent = hud
+table.insert(hubOnly, showcase)
+local showcaseLabel = UI.chip("YOUR TOP CARD", C.Accent, { TextColor3 = C.BG, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.5, 0), ZIndex = 5 })
+showcaseLabel.Parent = showcase
+local showcaseCard = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(210, 315), Position = UDim2.fromOffset(5, 32) })
+showcaseCard.Parent = showcase
+TweenService:Create(showcaseCard, TweenInfo.new(2.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Position = UDim2.fromOffset(5, 20), Rotation = 2 }):Play()
+local showcaseId = nil
+local function updateShowcase()
+	local best
+	for _, entry in state.cards do
+		local c = CardData.Get(entry.id)
+		if c and (not best or c.ovr > best.ovr) then
+			best = c
+		end
+	end
+	if not best or best.id == showcaseId then
+		return
+	end
+	showcaseId = best.id
+	showcaseCard:ClearAllChildren()
+	local face = CardRenderer.Create(CardData.Describe(best.id))
+	face.Size = UDim2.fromScale(1, 1)
+	face.Parent = showcaseCard
+	local hit = new("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1), ZIndex = 30 })
+	hit.Activated:Connect(function()
+		openPanel(collectionPanel)
+		renderCollection()
+	end)
+	hit.Parent = face
+end
+
+local function fitHub()
+	local w = gui.AbsoluteSize.X
+	featured.Size = UDim2.fromOffset(math.min(500, w - 32), 230)
+	showcase.Visible = w >= 980 and not backdrop.Visible
+end
+gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitHub)
+
+-- =========================================================================================
+-- Daily reward + purchase celebrations
+-- =========================================================================================
+local function coinBurst(count)
+	local center = gui.AbsoluteSize / 2
+	local target = coinIcon.AbsolutePosition - gui.AbsolutePosition + coinIcon.AbsoluteSize / 2
+	for k = 1, count do
+		local c = UI.icon("coin", { Size = UDim2.fromOffset(34, 34), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(center.X + math.random(-120, 120), center.Y + math.random(-80, 80)), ImageColor3 = C.Gold, ZIndex = 90 })
+		c.Parent = gui
+		task.delay(0.15 + k * 0.04, function()
+			local t = TweenService:Create(c, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Position = UDim2.fromOffset(target.X, target.Y), Size = UDim2.fromOffset(20, 20) })
+			t:Play()
+			t.Completed:Wait()
+			c:Destroy()
+			UI.pop(coinPill, 0.15)
+		end)
+	end
+end
+
+local dailyModal = UI.glass({ Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(520, 340), ZIndex = 80 })
+dailyModal.Parent = gui
+local function showDaily(info)
+	dailyModal:ClearAllChildren()
+	UI.corner(14).Parent = dailyModal
+	UI.stroke(C.Gold, 2).Parent = dailyModal
+	local top = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.new(1, 0, 0, 96), ZIndex = 80 }, { UI.corner(14) })
+	UI.flowGradient(top, Color3.fromRGB(255, 190, 40), Color3.fromRGB(255, 110, 30), Color3.fromRGB(255, 190, 40))
+	top.Parent = dailyModal
+	UI.text({ Text = "DAILY REWARD", FontFace = F.Display, TextScaled = false, TextSize = 40, TextStrokeTransparency = 0.6, Size = UDim2.new(1, 0, 0, 46), Position = UDim2.fromOffset(0, 12), ZIndex = 81 }).Parent = dailyModal
+	UI.text({ Text = ("DAY %d STREAK  -  COME BACK TOMORROW FOR MORE"):format(info.streak), FontFace = F.Display, TextColor3 = Color3.fromRGB(60, 30, 0), TextScaled = false, TextSize = 15, Size = UDim2.new(1, 0, 0, 20), Position = UDim2.fromOffset(0, 62), ZIndex = 81 }).Parent = dailyModal
+	local track = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -40, 0, 70), Position = UDim2.fromOffset(20, 112), ZIndex = 81 }, {
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, Padding = UDim.new(0, 8) }),
+	})
+	for d = 1, info.maxStreak do
+		local done = d <= info.streak
+		local amount = StoreConfig.DailyAmount(d, state.store and state.store.vip)
+		local box = new("Frame", { BackgroundColor3 = d == math.min(info.streak, info.maxStreak) and C.Gold or (done and Color3.fromRGB(70, 60, 30) or C.Panel2), Size = UDim2.fromOffset(60, 68), ZIndex = 81 }, { UI.corner(10) })
+		UI.text({ Text = "DAY " .. d, FontFace = F.Display, TextColor3 = done and C.BG or C.Muted, TextScaled = false, TextSize = 13, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(0, 6), ZIndex = 82 }).Parent = box
+		UI.text({ Text = tostring(amount), FontFace = F.Number, TextColor3 = done and C.BG or C.Text, TextScaled = false, TextSize = 18, Size = UDim2.new(1, 0, 0, 22), Position = UDim2.fromOffset(0, 30), ZIndex = 82 }).Parent = box
+		box.Parent = track
+	end
+	track.Parent = dailyModal
+	local amountLabel = UI.text({ Text = "+0", FontFace = F.Number, TextColor3 = C.Gold, TextScaled = false, TextSize = 40, Size = UDim2.new(1, 0, 0, 46), Position = UDim2.fromOffset(0, 196), ZIndex = 81 })
+	amountLabel.Parent = dailyModal
+	UI.countTo(amountLabel, 0, info.coins, function(v)
+		return "+" .. UI.commas(v) .. " COINS"
+	end)
+	UI.button({ kind = "gold", text = "COLLECT", size = UDim2.fromOffset(220, 52), anchor = Vector2.new(0.5, 0), position = UDim2.new(0.5, 0, 0, 262), textSize = 22, z = 81 }, function()
+		dailyModal.Visible = false
+		coinBurst(10)
+	end).Parent = dailyModal
+	dailyModal.Visible = true
+	UI.pop(dailyModal, 0.35)
+end
+Remotes:WaitForChild("DailyReward").OnClientEvent:Connect(showDaily)
+
+Remotes:WaitForChild("CoinsPurchased").OnClientEvent:Connect(function(info)
+	if info.vip then
+		vipChip.Visible = true
+		if state.store then
+			state.store.vip = true
+		end
+		toast("VIP unlocked! Your Coin rewards are now doubled.", C.Gold)
+		return
+	end
+	coinBurst(14)
+	toast(("+%s Coins added!"):format(UI.commas(info.coins)), C.Gold)
+end)
+
+-- =========================================================================================
 -- Play
 -- =========================================================================================
 local starting = false
@@ -905,13 +1327,16 @@ local function applyInventory(inv)
 	state.cards = inv.cards
 	state.lineup = inv.lineup or {}
 	state.stats = inv.stats or {}
-	coinsLabel.Text = UI.commas(inv.coins)
+	if oldCoins ~= inv.coins then
+		UI.countTo(coinsLabel, oldCoins, inv.coins)
+	end
 	if inv.coins > oldCoins and oldCoins > 0 then
 		UI.pop(coinPill, 0.3)
 	end
 	recordLabel.Text = ("%d W  -  %d L"):format(state.stats.wins or 0, state.stats.losses or 0)
 	CardData.Ensure()
 	teamChip.Text = "TEAM " .. teamRatings().ovr
+	updateShowcase()
 	if collectionPanel.Visible and not overlay.Visible then
 		renderCollection()
 	end
@@ -923,7 +1348,13 @@ end
 Remotes:WaitForChild("InventoryChanged").OnClientEvent:Connect(applyInventory)
 gui.Parent = player:WaitForChild("PlayerGui")
 fitDock()
+fitHub()
 task.spawn(function()
 	applyInventory(Remotes:WaitForChild("GetInventory"):InvokeServer())
 	state.shop = Remotes.GetShop:InvokeServer()
+	state.store = Remotes:WaitForChild("GetStore"):InvokeServer()
+	vipChip.Visible = state.store.vip == true
+	if state.store.vip then
+		teamChip.Position = UDim2.new(1, -12, 0, 47)
+	end
 end)

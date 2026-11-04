@@ -4,10 +4,29 @@
 
 | Currency | How you get it | Can buy with Robux? |
 |---|---|---|
-| **Coins** | Win vs AI: 400, loss: 150, daily login: 200, quick-selling cards | **No** (on purpose) |
-| **Robux** | Real money, spent directly on premium packs (Developer Products) | n/a |
+| **Coins** | Win 400 / tie 250 / loss 150 (2x with VIP), daily login 200-500 (streak, 2x with VIP), quick-selling cards | **Yes**: Coin bundles |
+| **Robux** | Real money, spent on premium packs, Coin bundles and VIP | n/a |
 
-Coins are never sold for Robux. That keeps Coin packs from counting as paid random items, so they don't need the PolicyService block. Only Robux packs do.
+### Coin bundles (Developer Products)
+
+| Bundle | Price | Coins per R$ |
+|---|---|---|
+| 3,000 Coins | 39 R$ | 77 |
+| 8,000 Coins (POPULAR) | 99 R$ | 81 |
+| 20,000 Coins (+30% BONUS) | 199 R$ | 101 |
+| 55,000 Coins (BEST VALUE) | 499 R$ | 110 |
+
+### VIP (Game Pass, 199 R$)
+
+2x Coins from every game, 2x daily login reward, gold VIP tag.
+
+### Daily login
+
+200 Coins on day 1, +50 per consecutive day, up to 500 on day 7+ (doubled for VIP). Missing a day resets the streak.
+
+### Paid random items policy
+
+Because Coins can be bought with Robux, the Coin-priced Starter Pack counts as a paid random item, the same as the Robux packs. Every pack shows exact odds before purchase. Players whose PolicyService says `ArePaidRandomItemsRestricted` can't buy Robux packs **or** Coin bundles, so any Coins they have were earned in-game and their Coin packs stay allowed.
 
 ## Card tiers (by OVR)
 

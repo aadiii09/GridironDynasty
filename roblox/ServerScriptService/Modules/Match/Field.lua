@@ -99,11 +99,12 @@ function Field.new(homeColor, awayColor, opts)
 	local function endZone(y, color, name, rot)
 		part({ Size = Vector3.new(W, 0.07, EZ), Position = at(0, y, 0.03), Color = color, CanCollide = false }, deco)
 		if name then
-			paint(deco, string.upper(name), CFrame.new(at(0, y, 0.09)), Vector2.new(W * 0.8, EZ * 0.7), WHITE, rot, 0.05)
+			paint(deco, string.upper(name), CFrame.new(at(0, y, 0.09)), Vector2.new(EZ * 0.7, W * 0.8), WHITE, rot, 0.05)
 		end
 	end
-	endZone(-EZ / 2, homeColor, opts.homeName, 180)
-	endZone(L + EZ / 2, awayColor, opts.awayName, 0)
+	-- painted names run across the field, readable from the field of play
+	endZone(-EZ / 2, homeColor, opts.homeName, 90)
+	endZone(L + EZ / 2, awayColor, opts.awayName, -90)
 
 	-- lines: goal lines, every 5 yards, sidelines, hash marks, yard numbers
 	for yd = 0, MatchConfig.FieldYards, 5 do

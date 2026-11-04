@@ -22,6 +22,7 @@ local CardDatabase = require(ServerScriptService.Modules.CardDatabase)
 local PlayerData = require(ServerScriptService.Modules.PlayerData)
 local Field = require(ServerScriptService.Modules.Match.Field)
 local Npc = require(ServerScriptService.Modules.Match.Npc)
+local StoreService = require(ServerScriptService.Modules.StoreService)
 
 local MatchService = {}
 
@@ -195,6 +196,10 @@ local function sendState(m, message, color)
 		playState = m.play and m.play.state,
 		targets = targets,
 		control = controlled and { slot = m.controlSlot, pos = controlled.card.pos, name = nameOf(controlled) } or nil,
+		-- for the broadcast camera
+		losWorld = m.field:ToWorld(0, m.los, 0),
+		downfield = m.field:Downfield(),
+		ball = m.ball,
 		message = message,
 		messageColor = color and color:ToHex(),
 		final = m.final,
@@ -788,7 +793,7 @@ local function resolveCatch(m)
 	if rcvDist <= 4.5 then
 		local cth = rcv.attrs.CTH or 50
 		local breakup = (nearest and nearest.isAvatar and sep < 3) and 0.15 or 0
-		local pCatch = math.clamp(0.55 + cth * 0.004 - math.max(0, 3 - sep) * 0.08 - math.max(0, rcvDist - 1.5) * 0.05 - breakup, 0.05, 0.97)
+		local pCatch = math.clamp(0.62 + cth * 0.004 - math.max(0, 3 - sep) * 0.06 - math.max(0, rcvDist - 1.5) * 0.05 - breakup, 0.05, 0.97)
 		log(("catch check: CTH %d, ball %.1f off, nearest defender %.1f%s, chance %.0f%%"):format(cth, rcvDist, sep, nearest and nearest.isAvatar and " (you)" or "", pCatch * 100))
 		if rng:NextNumber() < pCatch then
 			if m.possession == "user" then
@@ -1139,7 +1144,8 @@ function finishGame(m)
 	m.phase = "final"
 	local you, cpu = m.score.you, m.score.cpu
 	local result = you > cpu and "Win" or you < cpu and "Loss" or "Tie"
-	local coins = MatchConfig.Rewards[result]
+	local vip = StoreService.IsVIP(m.player)
+	local coins = MatchConfig.Rewards[result] * (vip and 2 or 1)
 	if PlayerData.Get(m.player) then
 		PlayerData.AddCoins(m.player, coins)
 		PlayerData.Update(m.player, function(data)
@@ -1153,7 +1159,7 @@ function finishGame(m)
 		end)
 		task.spawn(PlayerData.SaveNow, m.player)
 	end
-	m.final = { result = result, coins = coins }
+	m.final = { result = result, coins = coins, vip = vip }
 	log(m.player.Name, result, you, cpu)
 	sendState(m, result == "Win" and "YOU WIN!" or result == "Loss" and "YOU LOSE" or "TIE GAME", result == "Win" and GREEN or Color3.fromRGB(255, 196, 46))
 end

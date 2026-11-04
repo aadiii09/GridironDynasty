@@ -13,6 +13,7 @@ local ServerScriptService = game:GetService("ServerScriptService")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local PackConfig = require(ReplicatedStorage.Shared.PackConfig)
+local StoreConfig = require(ReplicatedStorage.Shared.StoreConfig)
 local CardDatabase = require(ServerScriptService.Modules.CardDatabase)
 local PlayerData = require(ServerScriptService.Modules.PlayerData)
 
@@ -174,10 +175,27 @@ local function onPromptPack(player, packId)
 	return { ok = true }
 end
 
+-- Coin bundles (Developer Products): add Coins, saved before the purchase is confirmed
+local function grantCoins(player, bundle, receipt)
+	PlayerData.AddCoins(player, bundle.coins)
+	PlayerData.MarkReceipt(player, receipt.PurchaseId)
+	if not PlayerData.SaveNow(player) then
+		PlayerData.Update(player, function(data)
+			data.coins -= bundle.coins
+			data.receipts[receipt.PurchaseId] = nil
+		end)
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	log(("%s bought %d Coins (%s)"):format(player.Name, bundle.coins, receipt.PurchaseId))
+	remotes.CoinsPurchased:FireClient(player, { coins = bundle.coins })
+	return Enum.ProductPurchaseDecision.PurchaseGranted
+end
+
 local function processReceipt(receipt)
 	local player = Players:GetPlayerByUserId(receipt.PlayerId)
 	local pack = PackConfig.ByProductId[receipt.ProductId]
-	if not player or not pack then
+	local bundle = StoreConfig.BundleByProductId[receipt.ProductId]
+	if not player or not (pack or bundle) then
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 	local profile = PlayerData.WaitFor(player, 10)
@@ -186,6 +204,9 @@ local function processReceipt(receipt)
 	end
 	if PlayerData.HasReceipt(player, receipt.PurchaseId) then
 		return Enum.ProductPurchaseDecision.PurchaseGranted -- already delivered
+	end
+	if bundle then
+		return grantCoins(player, bundle, receipt)
 	end
 
 	local result = grant(player, pack, "Robux " .. receipt.PurchaseId)
@@ -227,6 +248,10 @@ local function onGetShop(player)
 		serverTime = os.time(),
 		paidRandomRestricted = policy.paidRandomRestricted,
 	}
+end
+
+function PackService.GetPolicy(player)
+	return getPolicy(player)
 end
 
 function PackService.Start(remoteFolder)

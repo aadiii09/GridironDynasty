@@ -24,10 +24,17 @@ UI.Color = {
 }
 local C = UI.Color
 
+local function weighted(enum, weight)
+	local base = Font.fromEnum(enum)
+	return Font.new(base.Family, weight)
+end
+
 UI.Font = {
 	Heavy = Font.fromEnum(Enum.Font.GothamBlack),
 	Bold = Font.fromEnum(Enum.Font.GothamBold),
 	Medium = Font.fromEnum(Enum.Font.GothamMedium),
+	Display = weighted(Enum.Font.Oswald, Enum.FontWeight.Bold), -- condensed broadcast headlines
+	Number = weighted(Enum.Font.Sarpanch, Enum.FontWeight.Heavy), -- scores, ratings, prices
 }
 
 -- fallback glyphs when an icon image isn't uploaded yet
@@ -139,7 +146,7 @@ function UI.button(opts, onClick)
 	if opts.icon then
 		UI.icon(opts.icon, { Name = "Icon", Size = UDim2.fromScale(opts.iconScale or 0.75, opts.iconScale or 0.75), SizeConstraint = Enum.SizeConstraint.RelativeYY, ImageColor3 = kind.text, LayoutOrder = 1, ZIndex = b.ZIndex }).Parent = content
 	end
-	local label = UI.text({ Name = "Label", Text = opts.text or "", FontFace = UI.Font.Heavy, TextColor3 = kind.text, Size = UDim2.new(0, 0, 0.82, 0), AutomaticSize = Enum.AutomaticSize.X, TextScaled = false, TextSize = opts.textSize or 18, LayoutOrder = 2, ZIndex = b.ZIndex })
+	local label = UI.text({ Name = "Label", Text = opts.text or "", FontFace = opts.font or UI.Font.Display, TextColor3 = kind.text, Size = UDim2.new(0, 0, 0.82, 0), AutomaticSize = Enum.AutomaticSize.X, TextScaled = false, TextSize = (opts.textSize or 18) + 3, LayoutOrder = 2, ZIndex = b.ZIndex })
 	if opts.text == nil or opts.text == "" then
 		label.Visible = false
 	end
@@ -185,14 +192,95 @@ function UI.setButton(b, textValue, kindName)
 	end
 end
 
+-- Diagonal light sweep that crosses a GuiObject every few seconds (attention grabber)
+function UI.shine(gui, every, z)
+	local holder = new("Frame", { Name = "Shine", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ClipsDescendants = true, ZIndex = z or gui.ZIndex + 1 })
+	local corner = gui:FindFirstChildOfClass("UICorner")
+	if corner then
+		corner:Clone().Parent = holder
+	end
+	local streak = new("Frame", {
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 0.55,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.new(0, 34, 2.5, 0),
+		Position = UDim2.new(-0.3, 0, 0.5, 0),
+		Rotation = 20,
+		ZIndex = holder.ZIndex,
+	}, {
+		new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.2), NumberSequenceKeypoint.new(1, 1) }) }),
+	})
+	streak.Parent = holder
+	holder.Parent = gui
+	task.spawn(function()
+		while holder.Parent do
+			streak.Position = UDim2.new(-0.3, 0, 0.5, 0)
+			local t = TweenService:Create(streak, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut), { Position = UDim2.new(1.3, 0, 0.5, 0) })
+			t:Play()
+			task.wait(every or 3.5)
+		end
+	end)
+	return holder
+end
+
+-- Slow animated gradient (living banner backgrounds)
+function UI.flowGradient(gui, c1, c2, c3)
+	local g = new("UIGradient", {
+		Rotation = 25,
+		Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, c1), ColorSequenceKeypoint.new(0.5, c2), ColorSequenceKeypoint.new(1, c3 or c1) }),
+		Offset = Vector2.new(-0.4, 0),
+	})
+	g.Parent = gui
+	TweenService:Create(g, TweenInfo.new(6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Offset = Vector2.new(0.4, 0) }):Play()
+	return g
+end
+
+-- Corner ribbon ("BEST VALUE", "NEW", ...)
+function UI.ribbon(parent, textValue, color, z)
+	local r = new("TextLabel", {
+		BackgroundColor3 = color or C.Red,
+		Text = textValue,
+		TextColor3 = Color3.new(1, 1, 1),
+		FontFace = UI.Font.Display,
+		TextSize = 14,
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.fromOffset(0, 24),
+		Position = UDim2.fromOffset(-6, 10),
+		ZIndex = z or 20,
+	}, {
+		UI.corner(6),
+		new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }),
+		UI.stroke(Color3.new(0, 0, 0), 2, 0.6),
+	})
+	r.Parent = parent
+	return r
+end
+
+-- Count a number label up/down to a new value
+function UI.countTo(label, from, to, format)
+	format = format or UI.commas
+	local start = os.clock()
+	local dur = math.clamp(math.abs(to - from) / 4000, 0.35, 1.2)
+	task.spawn(function()
+		while os.clock() - start < dur do
+			local a = (os.clock() - start) / dur
+			a = 1 - (1 - a) ^ 3
+			label.Text = format(from + (to - from) * a)
+			task.wait()
+		end
+		label.Text = format(to)
+	end)
+end
+
 -- Little rounded tag
 function UI.chip(textValue, color, props)
 	local c = new("TextLabel", {
 		BackgroundColor3 = color or C.Panel2,
 		Text = textValue,
 		TextColor3 = C.Text,
-		FontFace = UI.Font.Heavy,
-		TextSize = 12,
+		FontFace = UI.Font.Display,
+		TextSize = 14,
 		AutomaticSize = Enum.AutomaticSize.X,
 		Size = UDim2.fromOffset(0, 22),
 	}, { UI.corner(11), new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }) })
