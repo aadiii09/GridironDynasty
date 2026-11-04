@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
+local Jerseys = require(ReplicatedStorage.Shared.Jerseys)
 local CardDatabase = require(ServerScriptService.Modules.CardDatabase)
 local PlayerData = require(ServerScriptService.Modules.PlayerData)
 
@@ -36,6 +37,7 @@ remote("RemoteEvent", "DailyReward")
 remote("RemoteFunction", "StartMatch")
 remote("RemoteEvent", "MatchAction")
 remote("RemoteEvent", "MatchState")
+local SetJersey = remote("RemoteFunction", "SetJersey")
 
 local PackService = require(ServerScriptService.Modules.PackService)
 local LineupService = require(ServerScriptService.Modules.LineupService)
@@ -60,6 +62,7 @@ local function snapshotFor(player)
 		cards = cards,
 		lineup = profile.data.lineup,
 		stats = profile.data.stats,
+		jersey = Jerseys.Get(profile.data.jersey).id,
 		dataVersion = CardDatabase.Version(),
 	}
 end
@@ -122,6 +125,22 @@ QuickSell.OnServerInvoke = function(player, uid)
 	PlayerData.AddCoins(player, value)
 	task.spawn(PlayerData.SaveNow, player)
 	return { ok = true, coins = value }
+end
+
+-- Equip a team jersey (must be unlocked by wins) ---------------------------------------
+SetJersey.OnServerInvoke = function(player, id)
+	local profile = PlayerData.Get(player)
+	if type(id) ~= "string" or not profile or not Jerseys.ById[id] then
+		return { ok = false, err = "Unknown jersey." }
+	end
+	local j = Jerseys.ById[id]
+	if not Jerseys.IsUnlocked(id, profile.data.stats.wins) then
+		return { ok = false, err = ("Win %d games to unlock %s."):format(j.wins, j.name) }
+	end
+	PlayerData.Update(player, function(data)
+		data.jersey = id
+	end)
+	return { ok = true, jersey = id }
 end
 
 -- Start ---------------------------------------------------------------------------

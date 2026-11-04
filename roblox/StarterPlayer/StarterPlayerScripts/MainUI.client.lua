@@ -1,5 +1,5 @@
 -- Lobby UI: profile + coins, nav dock with PLAY, Pack Shop (full odds before purchase), pack
--- opening, Collection with card details/quick-sell, and the 7v7 Lineup builder.
+-- opening, Collection with card details/quick-sell, the 7v7 Lineup builder and the jersey Locker.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,6 +12,7 @@ local StoreConfig = require(ReplicatedStorage.Shared.StoreConfig)
 local LineupConfig = require(ReplicatedStorage.Shared.LineupConfig)
 local Assets = require(ReplicatedStorage.Shared.Assets)
 local Ratings = require(ReplicatedStorage.Shared.Ratings)
+local Jerseys = require(ReplicatedStorage.Shared.Jerseys)
 local CardData = require(ReplicatedStorage.Client.CardData)
 local CardRenderer = require(ReplicatedStorage.Client.CardRenderer)
 local UI = require(ReplicatedStorage.Client.UIKit)
@@ -123,7 +124,7 @@ local dock = new("Frame", {
 	BackgroundTransparency = 1,
 	AnchorPoint = Vector2.new(0.5, 1),
 	Position = UDim2.new(0.5, 0, 1, -18),
-	Size = UDim2.fromOffset(760, 110),
+	Size = UDim2.fromOffset(900, 110),
 }, {
 	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Bottom, Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder }),
 	new("UIScale", { Name = "Fit" }),
@@ -153,8 +154,8 @@ local function tile(iconName, label, color, color2, order, onClick)
 end
 
 -- forward declarations
-local openPanel, closePanels, renderShop, renderCollection, renderLineup, startMatch
-local shopPanel, collectionPanel, lineupPanel
+local openPanel, closePanels, renderShop, renderCollection, renderLineup, renderLocker, startMatch
+local shopPanel, collectionPanel, lineupPanel, lockerPanel
 
 local packsTile = tile("packs", "STORE", Color3.fromRGB(190, 70, 255), Color3.fromRGB(255, 60, 140), 1, function()
 	openStore("PACKS")
@@ -172,8 +173,14 @@ tile("collection", "CARDS", Color3.fromRGB(40, 170, 255), Color3.fromRGB(60, 90,
 	openPanel(collectionPanel)
 	renderCollection()
 end)
+local lockerTile = tile("jersey", "LOCKER", Color3.fromRGB(46, 220, 160), Color3.fromRGB(20, 140, 200), 4, function()
+	openPanel(lockerPanel)
+	renderLocker()
+end)
+local lockerBadge = UI.chip("1/16", C.BG, { TextColor3 = C.Accent, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 6, 0, -8), ZIndex = 5 })
+lockerBadge.Parent = lockerTile
 
-local playButton = UI.button({ kind = "primary", text = "PLAY", icon = "football", iconScale = 0.5, size = UDim2.fromOffset(270, 108), order = 4, textSize = 44, radius = 18 }, function()
+local playButton = UI.button({ kind = "primary", text = "PLAY", icon = "football", iconScale = 0.5, size = UDim2.fromOffset(270, 108), order = 5, textSize = 44, radius = 18 }, function()
 	startMatch()
 end)
 playButton.Parent = dock
@@ -186,7 +193,7 @@ UI.text({ Text = "VS AI  -  7v7  -  WIN 400 COINS", FontFace = F.Display, TextCo
 -- shrink the dock on narrow (phone) screens
 local function fitDock()
 	local w = gui.AbsoluteSize.X
-	dock.Fit.Scale = math.clamp((w - 24) / 780, 0.45, 1)
+	dock.Fit.Scale = math.clamp((w - 24) / 920, 0.4, 1)
 end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitDock)
 
@@ -269,10 +276,11 @@ function openPanel(panel)
 	end
 end
 
-local shopBody, collectionBody, oddsBody, lineupBody
+local shopBody, collectionBody, oddsBody, lineupBody, lockerBody
 shopPanel, shopBody = makePanel("Shop", "STORE", "packs", Color3.fromRGB(220, 70, 220))
 collectionPanel, collectionBody = makePanel("Collection", "COLLECTION", "collection", C.Blue)
 lineupPanel, lineupBody = makePanel("Lineup", "LINEUP", "lineup", C.Gold)
+lockerPanel, lockerBody = makePanel("Locker", "LOCKER", "jersey", C.Accent)
 local oddsPanel
 oddsPanel, oddsBody = makePanel("Odds", "PACK ODDS", "packs", C.Purple)
 
@@ -1408,6 +1416,173 @@ function startMatch()
 end
 
 -- =========================================================================================
+-- Locker: team jerseys unlocked by wins
+-- =========================================================================================
+local lockerSelected -- jersey id shown in the big preview
+local lockerAnim = {} -- { parts, jersey } for every animated figure on screen
+local lockerConn
+
+local function lockerWins()
+	return state.stats.wins or 0
+end
+
+local function jerseyFigure(j)
+	local vp, parts = CardRenderer.Figure(j.primary, j.secondary, j.material)
+	if j.fx then
+		table.insert(lockerAnim, { parts = parts, jersey = j })
+	end
+	return vp
+end
+
+local function fxLabel(j)
+	return ({ shine = "SHINE", pulse = "GLOW", lava = "ANIMATED", galaxy = "ANIMATED", rainbow = "ANIMATED" })[j.fx]
+end
+
+function renderLocker()
+	lockerBody:ClearAllChildren()
+	table.clear(lockerAnim)
+	local wins = lockerWins()
+	local equipped = state.jersey or Jerseys.Default
+	lockerSelected = lockerSelected or equipped
+	local sel = Jerseys.Get(lockerSelected)
+	local unlocked = Jerseys.IsUnlocked(sel.id, wins)
+
+	new("UIListLayout", { Padding = UDim.new(0, 14), SortOrder = Enum.SortOrder.LayoutOrder }).Parent = lockerBody
+
+	-- top: big preview + details + progress -------------------------------------------------
+	local top = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -10, 0, 290), LayoutOrder = 1, ZIndex = 12 })
+	top.Parent = lockerBody
+	local stage = new("Frame", { BackgroundColor3 = C.Panel2, Size = UDim2.fromOffset(290, 290), ZIndex = 12 }, {
+		UI.corner(14),
+		UI.stroke(sel.fx and sel.secondary or sel.primary, 2, 0.3),
+		new("UIGradient", { Rotation = 90, Color = ColorSequence.new(sel.primary:Lerp(C.BG, 0.55), C.BG) }),
+	})
+	stage.Parent = top
+	local big = jerseyFigure(sel)
+	big.Size = UDim2.new(1, -10, 1, -10)
+	big.Position = UDim2.fromOffset(5, 5)
+	big.ZIndex = 13
+	big.Parent = stage
+
+	local x = 314
+	UI.text({ Text = string.upper(sel.name), FontFace = F.Display, TextScaled = false, TextSize = 40, Size = UDim2.new(1, -x, 0, 44), Position = UDim2.fromOffset(x, 6), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 12 }).Parent = top
+	local chips = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -x, 0, 24), Position = UDim2.fromOffset(x, 56), ZIndex = 12 }, {
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6) }),
+	})
+	chips.Parent = top
+	if sel.id == equipped then
+		UI.chip("EQUIPPED", C.Accent, { TextColor3 = C.BG, ZIndex = 12 }).Parent = chips
+	elseif unlocked then
+		UI.chip("UNLOCKED", C.Blue, { ZIndex = 12 }).Parent = chips
+	else
+		UI.chip("LOCKED", C.Red, { ZIndex = 12 }).Parent = chips
+	end
+	UI.chip(sel.wins == 0 and "STARTER" or (sel.wins .. " WINS"), C.Panel2, { ZIndex = 12 }).Parent = chips
+	if sel.fx then
+		UI.chip(fxLabel(sel), C.Purple, { ZIndex = 12 }).Parent = chips
+	end
+	local desc = unlocked and "Your whole team wears this in every game." or ("Win %d more game%s to unlock it."):format(sel.wins - wins, sel.wins - wins == 1 and "" or "s")
+	UI.text({ Text = desc, FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 16, Size = UDim2.new(1, -x, 0, 22), Position = UDim2.fromOffset(x, 92), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 12 }).Parent = top
+
+	-- progress toward the next jersey
+	local nextJ = Jerseys.Next(wins)
+	local prevWins = 0
+	for _, j in Jerseys.List do
+		if j.wins <= wins then
+			prevWins = math.max(prevWins, j.wins)
+		end
+	end
+	local bar = new("Frame", { BackgroundColor3 = C.BG, Size = UDim2.new(1, -x - 10, 0, 14), Position = UDim2.fromOffset(x, 160), ZIndex = 12 }, { UI.corner(7) })
+	bar.Parent = top
+	local pct = nextJ and math.clamp((wins - prevWins) / math.max(1, nextJ.wins - prevWins), 0, 1) or 1
+	pct = math.max(pct, 0.03) -- always show a sliver so the bar reads as a bar
+	local fill = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromScale(0, 1), ZIndex = 13 }, { UI.corner(7) })
+	UI.flowGradient(fill, C.Accent, C.Blue, C.Purple)
+	fill.Parent = bar
+	TweenService:Create(fill, TweenInfo.new(0.6, Enum.EasingStyle.Quad), { Size = UDim2.fromScale(pct, 1) }):Play()
+	UI.text({
+		Text = nextJ and ("%d WIN%s  -  %d MORE FOR %s"):format(wins, wins == 1 and "" or "S", nextJ.wins - wins, string.upper(nextJ.name)) or ("%d WINS  -  EVERY JERSEY UNLOCKED"):format(wins),
+		FontFace = F.Heavy, TextColor3 = C.Text, TextScaled = false, TextSize = 14,
+		Size = UDim2.new(1, -x, 0, 18), Position = UDim2.fromOffset(x, 136), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 12,
+	}).Parent = top
+
+	local equipBtn
+	if sel.id == equipped then
+		equipBtn = UI.button({ kind = "dark", text = "EQUIPPED", size = UDim2.fromOffset(240, 56), position = UDim2.fromOffset(x, 214), textSize = 18, z = 12 }, function() end)
+	elseif unlocked then
+		equipBtn = UI.button({ kind = "primary", icon = "jersey", text = "EQUIP", size = UDim2.fromOffset(240, 56), position = UDim2.fromOffset(x, 214), textSize = 20, z = 12 }, function()
+			local res = Remotes.SetJersey:InvokeServer(sel.id)
+			if res and res.ok then
+				state.jersey = res.jersey
+				Sounds.Play("cardFlip")
+				toast(sel.name .. " equipped", C.Accent)
+				renderLocker()
+			else
+				toast(res and res.err or "Couldn't equip", C.Red)
+			end
+		end)
+	else
+		equipBtn = UI.button({ kind = "dark", text = ("LOCKED  -  %d WINS"):format(sel.wins), size = UDim2.fromOffset(240, 56), position = UDim2.fromOffset(x, 214), textSize = 16, z = 12 }, function()
+			Sounds.Play("click", 0.6, 0.7)
+		end)
+	end
+	equipBtn.Parent = top
+
+	-- grid of every jersey ------------------------------------------------------------------
+	local grid = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -10, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 2, ZIndex = 12 }, {
+		new("UIGridLayout", { CellSize = UDim2.fromOffset(150, 196), CellPadding = UDim2.fromOffset(12, 12), SortOrder = Enum.SortOrder.LayoutOrder }),
+	})
+	grid.Parent = lockerBody
+	for i, j in Jerseys.List do
+		local open = Jerseys.IsUnlocked(j.id, wins)
+		local tileBtn = new("TextButton", { AutoButtonColor = false, Text = "", BackgroundColor3 = C.Panel2, LayoutOrder = i, ZIndex = 12 }, {
+			UI.corner(12),
+			UI.stroke(j.id == lockerSelected and C.Accent or (j.id == equipped and C.Gold or C.Stroke), j.id == lockerSelected and 3 or 1),
+		})
+		local fig = jerseyFigure(j)
+		fig.Size = UDim2.new(1, -16, 0, 130)
+		fig.Position = UDim2.fromOffset(8, 8)
+		fig.ZIndex = 13
+		fig.ImageTransparency = open and 0 or 0.55
+		fig.Parent = tileBtn
+		UI.text({ Text = string.upper(j.name), FontFace = F.Display, TextScaled = false, TextSize = 17, TextColor3 = open and C.Text or C.Muted, Size = UDim2.new(1, -12, 0, 20), Position = UDim2.fromOffset(6, 142), TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 13 }).Parent = tileBtn
+		local sub = j.id == equipped and "EQUIPPED" or open and "UNLOCKED" or ("WIN " .. j.wins)
+		UI.text({ Text = sub, FontFace = F.Heavy, TextScaled = false, TextSize = 12, TextColor3 = j.id == equipped and C.Accent or open and C.Muted or C.Gold, Size = UDim2.new(1, -12, 0, 16), Position = UDim2.fromOffset(6, 166), ZIndex = 13 }).Parent = tileBtn
+		if not open then
+			-- lock badge
+			new("Frame", { BackgroundColor3 = C.BG, BackgroundTransparency = 0.15, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0, 72), Size = UDim2.fromOffset(64, 26), ZIndex = 14 }, {
+				UI.corner(13),
+				UI.text({ Text = "LOCKED", FontFace = F.Heavy, TextScaled = false, TextSize = 12, TextColor3 = C.Muted, Size = UDim2.fromScale(1, 1), ZIndex = 15 }),
+			}).Parent = tileBtn
+		end
+		if j.fx then
+			UI.chip(fxLabel(j), C.Purple, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -6, 0, 6), ZIndex = 15 }).Parent = tileBtn
+		end
+		tileBtn.Activated:Connect(function()
+			lockerSelected = j.id
+			Sounds.Play("click", 0.7)
+			renderLocker()
+		end)
+		tileBtn.Parent = grid
+	end
+
+	-- animate the special jerseys while the Locker is open
+	if not lockerConn then
+		lockerConn = RunService.Heartbeat:Connect(function()
+			if not lockerPanel.Visible then
+				return
+			end
+			local t = os.clock()
+			for _, a in lockerAnim do
+				for _, p in a.parts do
+					p.Color = Jerseys.ColorAt(a.jersey, t, p.Position.Y * 0.12)
+				end
+			end
+		end)
+	end
+end
+
+-- =========================================================================================
 -- Inventory sync
 -- =========================================================================================
 local function applyInventory(inv)
@@ -1419,6 +1594,12 @@ local function applyInventory(inv)
 	state.cards = inv.cards
 	state.lineup = inv.lineup or {}
 	state.stats = inv.stats or {}
+	state.jersey = inv.jersey or state.jersey
+	local open = 0
+	for _, j in Jerseys.List do
+		open += Jerseys.IsUnlocked(j.id, state.stats.wins) and 1 or 0
+	end
+	lockerBadge.Text = ("%d/%d"):format(open, #Jerseys.List)
 	if oldCoins ~= inv.coins then
 		UI.countTo(coinsLabel, oldCoins, inv.coins)
 	end
@@ -1434,6 +1615,9 @@ local function applyInventory(inv)
 	end
 	if lineupPanel.Visible then
 		renderLineup()
+	end
+	if lockerPanel.Visible then
+		renderLocker()
 	end
 end
 

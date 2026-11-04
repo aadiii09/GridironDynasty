@@ -29,6 +29,7 @@ local Field = require(ServerScriptService.Modules.Match.Field)
 local Npc = require(ServerScriptService.Modules.Match.Npc)
 local StoreService = require(ServerScriptService.Modules.StoreService)
 local Ratings = require(ReplicatedStorage.Shared.Ratings)
+local Jerseys = require(ReplicatedStorage.Shared.Jerseys)
 
 local MatchService = {}
 
@@ -36,8 +37,6 @@ local Y = MatchConfig.Yard
 local L = MatchConfig.FieldLength()
 local HALF_W = MatchConfig.HalfWidth()
 local TACKLE_RANGE = 3.2
-local USER_PRIMARY = Color3.fromRGB(20, 22, 30)
-local USER_SECONDARY = Color3.fromRGB(46, 255, 140)
 local GREEN = Color3.fromRGB(46, 255, 140)
 local RED = Color3.fromRGB(255, 90, 90)
 local GOLD = Color3.fromRGB(255, 214, 40)
@@ -1148,7 +1147,7 @@ function endPlay(m, result, spotY, defender, receiver)
 		color, driveOver = good, true
 		local ez = MatchConfig.EndZoneYards * Y
 		for _, x in { -20, 0, 20 } do
-			burst(m, m.field:ToWorld(x, L + ez / 2, 1), userBall and USER_SECONDARY or Color3.fromHex(m.cpu.team.secondary), 70, "confetti")
+			burst(m, m.field:ToWorld(x, L + ez / 2, 1), userBall and m.jersey.secondary or Color3.fromHex(m.cpu.team.secondary), 70, "confetti")
 		end
 	elseif result == "fumble" then
 		msg = userBall and ("FUMBLE! " .. nameOf(defender) .. " forced it - turnover") or ("FUMBLE! Forced by " .. nameOf(defender) .. "!")
@@ -1428,11 +1427,15 @@ function finishGame(m)
 	local result = you > cpu and "Win" or you < cpu and "Loss" or "Tie"
 	local vip = StoreService.IsVIP(m.player)
 	local coins = MatchConfig.Rewards[result] * (vip and 2 or 1)
+	local unlocked = {}
 	if PlayerData.Get(m.player) then
 		PlayerData.AddCoins(m.player, coins)
 		PlayerData.Update(m.player, function(data)
 			if result == "Win" then
 				data.stats.wins += 1
+				for _, j in Jerseys.NewlyUnlocked(data.stats.wins - 1, data.stats.wins) do
+					table.insert(unlocked, j.name)
+				end
 			elseif result == "Loss" then
 				data.stats.losses += 1
 			else
@@ -1441,7 +1444,7 @@ function finishGame(m)
 		end)
 		task.spawn(PlayerData.SaveNow, m.player)
 	end
-	m.final = { result = result, coins = coins, vip = vip }
+	m.final = { result = result, coins = coins, vip = vip, unlocked = unlocked }
 	log(m.player.Name, result, you, cpu)
 	sendState(m, result == "Win" and "YOU WIN!" or result == "Loss" and "YOU LOSE" or "TIE GAME", result == "Win" and GREEN or Color3.fromRGB(255, 196, 46))
 end
@@ -1489,11 +1492,11 @@ local function cleanup(m)
 	end
 end
 
-local function buildTeam(m, cards, infos, primary, secondary)
+local function buildTeam(m, cards, infos, primary, secondary, jersey)
 	local team = { cards = cards, infos = infos, off = {}, def = {}, ratings = ratingsFor(cards) }
 	for _, slot in LineupConfig.Slots do
 		local side = slot.side == "Offense" and team.off or team.def
-		side[slot.id] = Npc.new(slot.id, slot.side, cards[slot.id], infos[slot.id], primary, secondary, m.field.model)
+		side[slot.id] = Npc.new(slot.id, slot.side, cards[slot.id], infos[slot.id], primary, secondary, m.field.model, jersey)
 		side[slot.id]:Hide(true)
 	end
 	return team
@@ -1518,6 +1521,21 @@ function MatchService.Start(remoteFolder)
 		local cpuTeam, cpuCards, cpuInfos = cpuSquad(userOvr)
 		local cpuPrimary = Color3.fromHex(cpuTeam.primary)
 		local cpuSecondary = Color3.fromHex(cpuTeam.secondary)
+		local jersey = Jerseys.Get(profile.data.jersey)
+		if not Jerseys.IsUnlocked(jersey.id, profile.data.stats.wins) then
+			jersey = Jerseys.Get(Jerseys.Default)
+		end
+		-- color clash with your jersey: the CPU wears its white away jersey
+		local function near(a, b)
+			return math.abs(a.R - b.R) + math.abs(a.G - b.G) + math.abs(a.B - b.B) < 0.45
+		end
+		if near(cpuPrimary, jersey.primary) then
+			cpuPrimary, cpuSecondary = Color3.fromRGB(236, 237, 242), cpuPrimary
+			if near(cpuPrimary, jersey.primary) then -- you're in white too
+				cpuPrimary, cpuSecondary = cpuSecondary, Color3.fromRGB(236, 237, 242)
+				cpuPrimary = cpuPrimary:Lerp(Color3.new(0, 0, 0), 0.35)
+			end
+		end
 
 		local m = {
 			player = player,
@@ -1525,6 +1543,7 @@ function MatchService.Start(remoteFolder)
 			token = 0,
 			score = { you = 0, cpu = 0 },
 			drive = 1,
+			jersey = jersey,
 		}
 		matches[player] = m
 		local buildStart = os.clock()
@@ -1533,15 +1552,15 @@ function MatchService.Start(remoteFolder)
 				homeName = "GRIDIRON",
 				awayName = cpuTeam.name,
 				screenText = ("YOU 0  -  0 %s"):format(string.upper(cpuTeam.name)),
-				crowd = { USER_SECONDARY, USER_PRIMARY, cpuPrimary, cpuSecondary, Color3.fromRGB(240, 240, 245) },
+				crowd = { jersey.secondary, jersey.primary, cpuPrimary, cpuSecondary, Color3.fromRGB(240, 240, 245) },
 			})
-			m.user = buildTeam(m, userCards, userInfos, USER_PRIMARY, USER_SECONDARY)
+			m.user = buildTeam(m, userCards, userInfos, jersey.primary, jersey.secondary, jersey)
 			m.cpu = buildTeam(m, cpuCards, cpuInfos, cpuPrimary, cpuSecondary)
 			m.cpu.team = cpuTeam
 			m.ball, m.ballTrail = makeBall()
 
 			Npc.SetCollisionGroup(char)
-			Npc.Equip(char, USER_PRIMARY, USER_SECONDARY)
+			Npc.Equip(char, jersey.primary, jersey.secondary, jersey)
 			m.charConn = player.CharacterAdded:Connect(function()
 				cleanup(m) -- died/respawned mid-game: end it
 			end)

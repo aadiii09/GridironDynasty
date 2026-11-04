@@ -12,6 +12,8 @@ local Assets = require(ReplicatedStorage.Shared.Assets)
 local UI = require(ReplicatedStorage.Client.UIKit)
 local MatchCamera = require(ReplicatedStorage.Client.MatchCamera)
 local MatchFX = require(ReplicatedStorage.Client.MatchFX)
+local JerseyFX = require(ReplicatedStorage.Client.JerseyFX)
+JerseyFX.Start()
 MatchCamera.BallPosition = function()
 	return MatchFX.BallPosition
 end
@@ -138,7 +140,7 @@ local function switchButton()
 end
 
 -- final screen ---------------------------------------------------------------------------------
-local finalPanel = UI.glass({ Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.52), Size = UDim2.fromOffset(440, 300), ZIndex = 20 })
+local finalPanel = UI.glass({ Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.52), Size = UDim2.fromOffset(440, 330), ZIndex = 20 })
 finalPanel.Parent = gui
 UI.icon("trophy", { Size = UDim2.fromOffset(56, 56), Position = UDim2.new(0.5, -28, 0, 18), ImageColor3 = C.Gold, ZIndex = 21 }).Parent = finalPanel
 local finalTitle = UI.text({ FontFace = F.Display, TextScaled = false, TextSize = 52, Size = UDim2.new(1, -30, 0, 46), Position = UDim2.fromOffset(15, 80), ZIndex = 21 })
@@ -147,7 +149,9 @@ local finalScore = UI.text({ FontFace = F.Heavy, TextScaled = false, TextSize = 
 finalScore.Parent = finalPanel
 local finalCoins = UI.text({ FontFace = F.Number, TextColor3 = C.Gold, TextScaled = false, TextSize = 20, Size = UDim2.new(1, -30, 0, 26), Position = UDim2.fromOffset(15, 168), ZIndex = 21 })
 finalCoins.Parent = finalPanel
-UI.button({ kind = "primary", text = "BACK TO LOBBY", size = UDim2.new(1, -60, 0, 52), position = UDim2.fromOffset(30, 222), textSize = 18, z = 21 }, function()
+local finalUnlock = UI.text({ FontFace = F.Heavy, TextColor3 = C.Accent, TextScaled = false, TextSize = 16, Size = UDim2.new(1, -30, 0, 22), Position = UDim2.fromOffset(15, 200), ZIndex = 21 })
+finalUnlock.Parent = finalPanel
+UI.button({ kind = "primary", text = "BACK TO LOBBY", size = UDim2.new(1, -60, 0, 52), position = UDim2.fromOffset(30, 254), textSize = 18, z = 21 }, function()
 	MatchAction:FireServer("leave")
 end).Parent = finalPanel
 
@@ -233,6 +237,8 @@ local function render()
 		finalPanel:FindFirstChildOfClass("UIStroke").Color = finalTitle.TextColor3
 		finalScore.Text = ("YOU %d  -  %d %s"):format(s.you, s.cpu, string.upper(s.opponent.name))
 		finalCoins.Text = ("+%d COINS"):format(s.final.coins)
+		local unlocked = s.final.unlocked or {}
+		finalUnlock.Text = #unlocked > 0 and ("NEW JERSEY UNLOCKED: " .. string.upper(table.concat(unlocked, ", ")) .. "  -  equip it in the Locker") or ""
 	end
 end
 

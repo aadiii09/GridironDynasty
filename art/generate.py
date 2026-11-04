@@ -372,6 +372,17 @@ def ic_whistle(d, s):
     d.ellipse([s * 0.3, s * 0.5, s * 0.45, s * 0.65], fill=(0, 0, 0, 0))
 
 
+def ic_jersey(d, s):
+    # football jersey: shoulders, short sleeves, body, V-neck and a number
+    body = [(0.34, 0.14), (0.42, 0.14), (0.5, 0.24), (0.58, 0.14), (0.66, 0.14), (0.92, 0.26), (0.84, 0.48),
+            (0.74, 0.44), (0.74, 0.88), (0.26, 0.88), (0.26, 0.44), (0.16, 0.48), (0.08, 0.26)]
+    d.polygon([(s * x, s * y) for x, y in body], fill="white")
+    # number 1 cut out of the chest
+    d.rectangle([s * 0.46, s * 0.4, s * 0.56, s * 0.76], fill=(0, 0, 0, 0))
+    d.polygon([(s * 0.46, s * 0.4), (s * 0.56, s * 0.4), (s * 0.4, s * 0.5), (s * 0.4, s * 0.44)], fill=(0, 0, 0, 0))
+    d.rectangle([s * 0.4, s * 0.72, s * 0.62, s * 0.78], fill=(0, 0, 0, 0))
+
+
 # ----------------------------------------------------------------------------- team logos
 def star_pts(cx, cy, r1, r2, n=5, rot=-math.pi / 2):
     pts = []
@@ -596,7 +607,7 @@ def main():
     print("Packs"); pack_art(); rays()
     print("Icons")
     for n, f in [("football", ic_football), ("packs", ic_packs), ("lineup", ic_lineup), ("collection", ic_collection),
-                 ("coin", ic_coin), ("trophy", ic_trophy), ("close", ic_close), ("switch", ic_switch), ("whistle", ic_whistle)]:
+                 ("coin", ic_coin), ("trophy", ic_trophy), ("close", ic_close), ("switch", ic_switch), ("whistle", ic_whistle), ("jersey", ic_jersey)]:
         icon(n, f)
     print("Plays")
     play_diagram("quick", {"WR1": [(0, 3), (-6, 8), (-12, 14)], "WR2": [(0, 6), (7, 6)], "TE": [(0, 2), (-8, 4), (-16, 4)], "RB": [(3, 1), (9, 2)]})

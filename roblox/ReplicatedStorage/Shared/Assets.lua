@@ -9,6 +9,7 @@ local Assets = {
 	pack = "rbxassetid://74881757179517",
 	rays = "rbxassetid://85347393071192",
 	icon_close = "rbxassetid://91790189111712",
+	icon_jersey = "rbxassetid://118316417100418",
 	icon_coin = "rbxassetid://100143540206648",
 	icon_collection = "rbxassetid://104964898949277",
 	icon_football = "rbxassetid://138111292683576",

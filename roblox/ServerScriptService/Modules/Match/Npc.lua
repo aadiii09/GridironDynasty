@@ -9,6 +9,7 @@ local Players = game:GetService("Players")
 local PhysicsService = game:GetService("PhysicsService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
+local CollectionService = game:GetService("CollectionService")
 
 local MatchConfig = require(ReplicatedStorage.Shared.MatchConfig)
 local Assets = require(ReplicatedStorage.Shared.Assets)
@@ -245,6 +246,32 @@ local function dress(model, primary, secondary, skin)
 	end
 end
 
+-- Tag every part painted in the jersey color (so animated jerseys can recolor them on clients),
+-- give special jerseys their material, and flag animated ones for Client/JerseyFX.
+local function applyJersey(container, primary, jersey)
+	if not jersey then
+		return
+	end
+	local function close(c)
+		return math.abs(c.R - primary.R) + math.abs(c.G - primary.G) + math.abs(c.B - primary.B) < 0.015
+	end
+	for _, d in container:GetDescendants() do
+		if d:IsA("BasePart") and d.Name ~= "HumanoidRootPart" and close(d.Color) then
+			d:SetAttribute("JerseyPrimary", true)
+			if jersey.material then
+				d.Material = Enum.Material[jersey.material]
+				if jersey.material == "Glass" then
+					d.Transparency = 0
+				end
+			end
+		end
+	end
+	if jersey.fx then
+		container:SetAttribute("JerseyId", jersey.id)
+		CollectionService:AddTag(container, "JerseyFx")
+	end
+end
+
 function Npc.SetCollisionGroup(model)
 	for _, d in model:GetDescendants() do
 		if d:IsA("BasePart") then
@@ -254,7 +281,7 @@ function Npc.SetCollisionGroup(model)
 end
 
 -- Helmet + pads on the player's own avatar during a game (removed afterwards)
-function Npc.Equip(character, primary, secondary)
+function Npc.Equip(character, primary, secondary, jersey)
 	local gear = Instance.new("Folder")
 	gear.Name = "MatchGear"
 	gear.Parent = character
@@ -269,6 +296,7 @@ function Npc.Equip(character, primary, secondary)
 			d.Parent = gear
 		end
 	end
+	applyJersey(gear, primary, jersey)
 	for _, acc in character:GetChildren() do
 		if acc:IsA("Accessory") then
 			local handle = acc:FindFirstChild("Handle")
@@ -297,7 +325,7 @@ function Npc.Unequip(character)
 end
 
 -- card: { ovr, pos, attrs = {...} }, info: { last, number }
-function Npc.new(slotId, side, card, info, primary, secondary, parent)
+function Npc.new(slotId, side, card, info, primary, secondary, parent, jersey)
 	local self = setmetatable({}, Npc)
 	self.slot = slotId
 	self.side = side -- "Offense" / "Defense"
@@ -330,6 +358,7 @@ function Npc.new(slotId, side, card, info, primary, secondary, parent)
 	addPads(model, primary, secondary)
 	addHelmet(model, primary, secondary)
 	addNumbers(model, info and info.number, info and info.last, primary, secondary)
+	applyJersey(model, primary, jersey)
 	Npc.SetCollisionGroup(model)
 
 	-- name tag

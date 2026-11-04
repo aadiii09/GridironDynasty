@@ -174,6 +174,27 @@ local function addFigure(parent, primary, secondary)
 	return vp
 end
 
+-- A standalone figure in any jersey (Locker preview). Parts in the jersey color are marked
+-- JerseyPrimary so the caller can animate them; material applies to special jerseys.
+function CardRenderer.Figure(primary, secondary, material)
+	local vp = addFigure(nil, primary, secondary)
+	vp.Size = UDim2.fromScale(1, 1)
+	vp.Position = UDim2.new()
+	-- whole body in view (card faces crop at the knees)
+	vp.CurrentCamera.CFrame = CFrame.lookAt(Vector3.new(0, -0.3, -16), Vector3.new(0, -0.55, 0))
+	local parts = {}
+	for _, d in vp:GetDescendants() do
+		if d:IsA("BasePart") and d.Color == primary then
+			d:SetAttribute("JerseyPrimary", true)
+			if material then
+				d.Material = Enum.Material[material]
+			end
+			table.insert(parts, d)
+		end
+	end
+	return vp, parts
+end
+
 -- Animated holo sweep across the card (Elite / Icon)
 local function addShimmer(root, color)
 	local holo = image(Assets.card_tint ~= "" and Assets.card_tint or "", {
