@@ -19,16 +19,16 @@ StoreConfig.EarnInfo = {
 }
 
 StoreConfig.CoinBundles = {
-	{ id = "coins_1", coins = 3000, price = 39, productId = 0 },
-	{ id = "coins_2", coins = 8000, price = 99, productId = 0, tag = "POPULAR" },
-	{ id = "coins_3", coins = 20000, price = 199, productId = 0, tag = "+30% BONUS" },
-	{ id = "coins_4", coins = 55000, price = 499, productId = 0, tag = "BEST VALUE" },
+	{ id = "coins_1", coins = 3000, price = 39, productId = 3728100112 },
+	{ id = "coins_2", coins = 8000, price = 99, productId = 3728100137, tag = "POPULAR" },
+	{ id = "coins_3", coins = 20000, price = 199, productId = 3728100195, tag = "+30% BONUS" },
+	{ id = "coins_4", coins = 55000, price = 499, productId = 3728100229, tag = "BEST VALUE" },
 }
 
 StoreConfig.VIP = {
 	name = "VIP PASS",
 	price = 199,
-	gamePassId = 0,
+	gamePassId = 2067973914,
 	perks = { "2x Coins from every game", "2x daily login reward", "Gold VIP tag in your profile" },
 }
 
