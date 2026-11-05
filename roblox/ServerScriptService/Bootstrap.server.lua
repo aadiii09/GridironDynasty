@@ -48,6 +48,8 @@ remote("RemoteFunction", "H2HRespond")
 remote("RemoteFunction", "GetH2HInfo")
 remote("RemoteEvent", "H2HEvent")
 local SetHubSetting = remote("RemoteFunction", "SetHubSetting")
+local TutorialAction = remote("RemoteFunction", "TutorialAction")
+local TutorialDone = remote("RemoteEvent", "TutorialDone")
 
 local PackService = require(ServerScriptService.Modules.PackService)
 local LineupService = require(ServerScriptService.Modules.LineupService)
@@ -81,6 +83,7 @@ local function snapshotFor(player)
 		difficulty = profile.data.difficulty,
 		hub = profile.data.settings and profile.data.settings.hub or {},
 		h2h = profile.data.h2h,
+		tutorial = profile.data.tutorial,
 		dataVersion = CardDatabase.Version(),
 	}
 end
@@ -117,9 +120,23 @@ end
 
 local givingStarter = {} -- [userId] = true; keyed by user so it survives any profile reload
 
-PlayerData.Changed.Event:Connect(function(player, profile)
-	if not profile.leaderboardSynced then
-		profile.leaderboardSynced = true
+-- (BindableEvents pass a COPY of tables, so always work on PlayerData.Get(player), and keep
+-- once-per-player flags here rather than on the profile)
+local leaderboardSynced = {} -- [Player] = true
+game:GetService("Players").PlayerRemoving:Connect(function(player)
+	leaderboardSynced[player] = nil
+end)
+PlayerData.Changed.Event:Connect(function(player)
+	local profile = PlayerData.Get(player)
+	if not profile then
+		return
+	end
+	-- players who already played before the tutorial existed don't need it
+	if profile.data.tutorial == nil and ((profile.data.stats.wins or 0) + (profile.data.stats.losses or 0) + (profile.data.stats.ties or 0)) > 0 then
+		profile.data.tutorial = "done"
+	end
+	if not leaderboardSynced[player] then
+		leaderboardSynced[player] = true
 		LeaderboardService.SyncTotal(player, profile.data.stats.wins)
 	end
 	if not profile.data.starterGiven and not givingStarter[player.UserId] then
@@ -236,7 +253,32 @@ MatchService.PlayerExited.Event:Connect(function(player)
 	task.wait(0.2)
 	toStage(player)
 	lobbyGear(player)
+	-- first game done (or left): tutorial complete, here's a Starter Pack
+	local profile = PlayerData.Get(player)
+	if profile and profile.data.tutorial ~= "done" then
+		PlayerData.Update(player, function(data)
+			data.tutorial = "done"
+		end)
+		task.wait(1.2)
+		TutorialDone:FireClient(player, { pack = "starter" })
+		PackService.GrantFree(player, "starter", "tutorial")
+		task.spawn(PlayerData.SaveNow, player)
+	end
 end)
+
+-- skip the tutorial (no reward)
+TutorialAction.OnServerInvoke = function(player, action)
+	local profile = PlayerData.Get(player)
+	if not profile then
+		return { ok = false }
+	end
+	if action == "skip" and profile.data.tutorial ~= "done" then
+		PlayerData.Update(player, function(data)
+			data.tutorial = "done"
+		end)
+	end
+	return { ok = true }
+end
 
 -- Start ---------------------------------------------------------------------------
 CardDatabase.Start()

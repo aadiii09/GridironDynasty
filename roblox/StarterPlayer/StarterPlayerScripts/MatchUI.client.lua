@@ -14,6 +14,8 @@ local UI = require(ReplicatedStorage.Client.UIKit)
 local MatchCamera = require(ReplicatedStorage.Client.MatchCamera)
 local MatchFX = require(ReplicatedStorage.Client.MatchFX)
 local JerseyFX = require(ReplicatedStorage.Client.JerseyFX)
+local ScreenFit = require(ReplicatedStorage.Client.ScreenFit)
+local TOUCH = ScreenFit.IsTouch() -- phones/tablets: tap wording, action buttons on the right
 JerseyFX.Start()
 MatchCamera.BallPosition = function()
 	return MatchFX.BallPosition
@@ -97,20 +99,78 @@ local controls = new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UD
 	new("UIScale", { Name = "Fit" }),
 })
 controls.Parent = gui
+local sideControls = new("Frame", { Name = "SideControls", AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -20, 1, -24), Size = UDim2.fromOffset(240, 360), BackgroundTransparency = 1 }, {
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Vertical, HorizontalAlignment = Enum.HorizontalAlignment.Right, VerticalAlignment = Enum.VerticalAlignment.Bottom, Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }),
+})
+sideControls.Parent = gui
 local hint = UI.text({ FontFace = F.Display, TextColor3 = C.Text, TextStrokeTransparency = 0.35, TextScaled = false, TextSize = 16, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -196), Size = UDim2.new(0.9, 0, 0, 22) })
 hint.Parent = gui
 
-local function fit()
-	controls.Fit.Scale = math.clamp((gui.AbsoluteSize.X - 24) / 900, 0.5, 1)
-end
-gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
+local fit -- set up at the end (ScreenFit)
 
 local function clearControls()
-	for _, c in controls:GetChildren() do
-		if c:IsA("GuiObject") then
-			c:Destroy()
+	for _, holder in { controls, sideControls } do
+		for _, c in holder:GetChildren() do
+			if c:IsA("GuiObject") then
+				c:Destroy()
+			end
 		end
 	end
+end
+
+-- where buttons go during a play: bottom center on PC, a right-hand column on touch screens
+local function actionHolder()
+	return TOUCH and sideControls or controls
+end
+
+-- tutorial coach: big tips for a new player's first game ---------------------------------------
+local coach = UI.glass({ Name = "Coach", Visible = false, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 160), Size = UDim2.fromOffset(640, 0), AutomaticSize = Enum.AutomaticSize.Y, ZIndex = 15 })
+coach.Parent = gui
+coach:FindFirstChildOfClass("UIStroke").Color = C.Gold
+new("UIPadding", { PaddingTop = UDim.new(0, 12), PaddingBottom = UDim.new(0, 14), PaddingLeft = UDim.new(0, 18), PaddingRight = UDim.new(0, 18) }).Parent = coach
+new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }).Parent = coach
+UI.chip("COACH", C.Gold, { TextColor3 = C.BG, LayoutOrder = 1, ZIndex = 16 }).Parent = coach
+local coachText = UI.text({ Text = "", FontFace = F.Display, TextScaled = false, TextSize = 24, TextWrapped = true, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 2, ZIndex = 16 })
+coachText.Parent = coach
+local coachLast
+local function coachSay(text)
+	if not text then
+		coach.Visible = false
+		coachLast = nil
+		return
+	end
+	coachText.Text = text
+	if coachLast ~= text then
+		coachLast = text
+		coach.Visible = true
+		UI.pop(coach, 0.25)
+	end
+end
+
+local function coachTip(s)
+	local userBall = s.possession == "user"
+	if s.phase == "playcall" then
+		return TOUCH and "You have the ball! Tap a play. QUICK PASS is a great first call." or "You have the ball! Pick a play: press 1 for QUICK PASS (or click a card)."
+	elseif s.phase == "presnap" and userBall then
+		return TOUCH and "Tap SNAP to start the play." or "Press SPACE (or click SNAP) to start the play."
+	elseif s.phase == "live" and userBall and s.playState == "dropback" then
+		return TOUCH and "Throw it! Tap a receiver. GREEN means he's open." or "Throw it! Press a receiver's number (1-4). GREEN rings are open."
+	elseif s.phase == "live" and userBall and s.playState == "carry" then
+		return TOUCH and "RUN! Use the joystick to reach the end zone." or "RUN! Use WASD to reach the end zone."
+	elseif s.phase == "defcall" then
+		return "Now you're on defense. Pick a coverage: MAN COVERAGE is a safe start."
+	elseif s.phase == "presnap" then
+		return TOUCH and "Tap READY when you're set." or "Press SPACE (or click READY) when you're set."
+	elseif s.phase == "live" and s.playState == "air" then
+		return "Ball's in the air! Run to the GOLD CIRCLE to pick it off."
+	elseif s.phase == "live" and s.playState == "carry" then
+		return "Run into the player with the GOLD outline to tackle him."
+	elseif s.phase == "live" then
+		return "Chase the QB or stick with your receiver. You'll jump to whoever is closest when he throws."
+	elseif s.phase == "final" then
+		return "That's your first game! Head back to the lobby for a FREE Starter Pack."
+	end
+	return nil
 end
 
 -- play/defense call card with diagram
@@ -137,7 +197,7 @@ local function callCard(key, name, desc, diagram, color, onClick)
 end
 
 local function switchButton()
-	return UI.button({ kind = "purple", icon = "switch", text = "SWITCH  [Q]", size = UDim2.fromOffset(180, 60), order = 9, textSize = 16 }, function()
+	return UI.button({ kind = "purple", icon = "switch", text = TOUCH and "SWITCH" or "SWITCH  [Q]", size = UDim2.fromOffset(180, 60), order = 9, textSize = 16 }, function()
 		MatchAction:FireServer("switch")
 	end)
 end
@@ -302,7 +362,7 @@ local function render()
 	finalPanel.Visible = s.phase == "final"
 
 	if s.phase == "playcall" then
-		hint.Text = "YOUR BALL  -  call a play (1-3)"
+		hint.Text = TOUCH and "YOUR BALL  -  tap a play" or "YOUR BALL  -  call a play (1-3)"
 		for i, play in MatchConfig.Plays do
 			local color = i == 3 and C.Gold or C.Accent
 			callCard(i, play.name, play.desc, Assets["play_" .. play.id], color, function()
@@ -310,7 +370,7 @@ local function render()
 			end).Parent = controls
 		end
 	elseif s.phase == "defcall" then
-		hint.Text = ("DEFENSE  -  call a coverage (1-3). You're the %s %s, Q to switch"):format(s.control and s.control.pos or "", s.control and s.control.name or "")
+		hint.Text = ("DEFENSE  -  %s. You're the %s %s"):format(TOUCH and "tap a coverage" or "call a coverage (1-3), Q to switch", s.control and s.control.pos or "", s.control and s.control.name or "")
 		for i, call in MatchConfig.DefenseCalls do
 			local color = i == 3 and C.Red or C.Blue
 			callCard(i, call.name, call.desc, Assets["play_" .. call.id], color, function()
@@ -321,30 +381,30 @@ local function render()
 	elseif s.phase == "waiting" then
 		hint.Text = ("Waiting for %s to call..."):format(s.opponent.name)
 	elseif s.phase == "presnap" and not userBall and not s.canSnap then
-		hint.Text = ("You're the %s %s  -  %s snaps the ball  -  Q to switch"):format(s.control and s.control.pos or "", s.control and s.control.name or "", s.opponent.name)
-		switchButton().Parent = controls
+		hint.Text = ("You're the %s %s  -  %s snaps the ball"):format(s.control and s.control.pos or "", s.control and s.control.name or "", s.opponent.name)
+		switchButton().Parent = actionHolder()
 	elseif s.phase == "presnap" and not userBall then
-		hint.Text = ("You're the %s %s  -  Space when ready, Q to switch"):format(s.control and s.control.pos or "", s.control and s.control.name or "")
-		UI.button({ kind = "primary", icon = "whistle", text = "READY  [SPACE]", size = UDim2.fromOffset(250, 64), textSize = 18 }, function()
+		hint.Text = ("You're the %s %s%s"):format(s.control and s.control.pos or "", s.control and s.control.name or "", TOUCH and "" or "  -  Space when ready, Q to switch")
+		UI.button({ kind = "primary", icon = "whistle", text = TOUCH and "READY" or "READY  [SPACE]", size = UDim2.fromOffset(TOUCH and 220 or 250, 64), textSize = 18 }, function()
 			MatchAction:FireServer("snap")
-		end).Parent = controls
-		switchButton().Parent = controls
+		end).Parent = actionHolder()
+		switchButton().Parent = actionHolder()
 	elseif s.phase == "live" and not userBall then
 		if s.playState == "air" then
 			hint.Text = "BALL IN THE AIR  -  run to the GOLD CIRCLE to pick it off or break it up"
 		elseif s.playState == "carry" then
-			hint.Text = "Chase the GOLD ball carrier and run into him to tackle  -  Q switches"
+			hint.Text = "Chase the GOLD ball carrier and run into him to tackle"
 		else
 			hint.Text = "Rush the QB or cover your man  -  you'll jump to the defender nearest the ball when it's thrown"
 		end
-		switchButton().Parent = controls
+		switchButton().Parent = actionHolder()
 	elseif s.phase == "presnap" then
-		hint.Text = s.play == "run" and "Snap it and take the handoff" or "Snap it, then throw to a yellow ring (1-4)"
-		UI.button({ kind = "primary", icon = "football", text = "SNAP  [SPACE]", size = UDim2.fromOffset(250, 64), textSize = 18 }, function()
+		hint.Text = s.play == "run" and "Snap it and take the handoff" or (TOUCH and "Snap it, then tap a receiver to throw" or "Snap it, then throw to a yellow ring (1-4)")
+		UI.button({ kind = "primary", icon = "football", text = TOUCH and "SNAP" or "SNAP  [SPACE]", size = UDim2.fromOffset(TOUCH and 220 or 250, 64), textSize = 18 }, function()
 			MatchAction:FireServer("snap")
-		end).Parent = controls
+		end).Parent = actionHolder()
 	elseif s.phase == "live" and s.playState == "dropback" and s.play ~= "run" then
-		hint.Text = "THROW  (1-4)  -  GREEN = open, RED = covered  -  or run past the line to scramble"
+		hint.Text = TOUCH and "THROW  -  tap a receiver  -  GREEN = open, RED = covered" or "THROW  (1-4)  -  GREEN = open, RED = covered  -  or run past the line to scramble"
 		table.clear(openChips)
 		for _, t in s.targets do
 			if t.available then
@@ -358,7 +418,7 @@ local function render()
 				if t.model then
 					openChips[t.model] = chip
 				end
-				b.Parent = controls
+				b.Parent = actionHolder()
 			end
 		end
 	elseif s.phase == "live" and s.playState == "carry" then
@@ -420,6 +480,7 @@ Remotes:WaitForChild("MatchState").OnClientEvent:Connect(function(s)
 	if main then
 		main.Enabled = false
 	end
+	game:GetService("GuiService").TouchControlsEnabled = true
 	if firstState then
 		UI.blur(false)
 	end
@@ -430,6 +491,7 @@ Remotes:WaitForChild("MatchState").OnClientEvent:Connect(function(s)
 	if s.phase == "final" then
 		UI.pop(finalPanel, 0.35)
 	end
+	coachSay(s.tutorial and coachTip(s) or nil)
 end)
 
 local keyNumbers = {
@@ -456,4 +518,9 @@ UserInputService.InputBegan:Connect(function(input, processed)
 end)
 
 gui.Parent = player:WaitForChild("PlayerGui")
+local fitter = ScreenFit.Apply(gui)
+function fit()
+	controls.Fit.Scale = math.clamp((fitter.size().X - 24) / 900, 0.5, 1)
+end
+fitter.changed:Connect(fit)
 fit()

@@ -5,6 +5,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local GuiService = game:GetService("GuiService")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local PackConfig = require(ReplicatedStorage.Shared.PackConfig)
@@ -19,6 +20,7 @@ local CardData = require(ReplicatedStorage.Client.CardData)
 local CardRenderer = require(ReplicatedStorage.Client.CardRenderer)
 local UI = require(ReplicatedStorage.Client.UIKit)
 local Sounds = require(ReplicatedStorage.Client.Sounds)
+local ScreenFit = require(ReplicatedStorage.Client.ScreenFit)
 
 local player = Players.LocalPlayer
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
@@ -30,8 +32,13 @@ local state = { coins = 0, cards = {}, lineup = {}, stats = {}, shop = nil }
 
 local gui = new("ScreenGui", { Name = "GridironUI", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling })
 
+local fitter -- ScreenFit (set once the UI is built)
+local function vsize() -- layout size in design pixels (the scaled canvas)
+	return fitter and fitter.size() or gui.AbsoluteSize
+end
+
 local function toast(msg, color)
-	UI.toast(gui, msg, color)
+	UI.toast(fitter and fitter.root or gui, msg, color)
 end
 
 local function fmtPct(p)
@@ -202,7 +209,7 @@ local hotBadge = UI.chip("HOT", C.Red, { AnchorPoint = Vector2.new(1, 0), Positi
 hotBadge.Parent = packsTile
 local freeBadge = UI.chip("FREE PACK!", C.Accent, { Visible = false, TextColor3 = C.BG, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -12), ZIndex = 6 })
 freeBadge.Parent = packsTile
-tile("lineup", "LINEUP", Color3.fromRGB(255, 190, 40), Color3.fromRGB(255, 110, 30), 2, function()
+local lineupTile = tile("lineup", "LINEUP", Color3.fromRGB(255, 190, 40), Color3.fromRGB(255, 110, 30), 2, function()
 	openPanel(lineupPanel)
 	renderLineup()
 end)
@@ -229,10 +236,9 @@ UI.text({ Text = "VS CPU  -  RANKED  -  FRIENDLY", FontFace = F.Display, TextCol
 
 -- shrink the dock on narrow (phone) screens
 local function fitDock()
-	local w = gui.AbsoluteSize.X
+	local w = vsize().X
 	dock.Fit.Scale = math.clamp((w - 24) / 920, 0.4, 1)
 end
-gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitDock)
 
 -- =========================================================================================
 -- Panels
@@ -261,7 +267,7 @@ local function makePanel(name, title, iconName, color)
 	badge.Parent = panel
 	local titleLabel = UI.text({ Name = "Title", Text = title, FontFace = F.Display, TextScaled = false, TextSize = 34, Size = UDim2.new(1, -140, 0, 40), Position = UDim2.fromOffset(72, 12), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 11 })
 	titleLabel.Parent = panel
-	local close = UI.button({ kind = "dark", icon = "close", size = UDim2.fromOffset(44, 40), position = UDim2.new(1, -58, 0, 12), z = 11 }, function()
+	local close = UI.button({ name = "Close", kind = "dark", icon = "close", size = UDim2.fromOffset(44, 40), position = UDim2.new(1, -58, 0, 12), z = 11 }, function()
 		closePanels()
 	end)
 	close.Parent = panel
@@ -1131,7 +1137,7 @@ function renderLineup()
 			renderLineup()
 		end).Parent = header
 	end
-	UI.button({ kind = "gold", text = "AUTO-FILL", icon = "lineup", size = UDim2.fromOffset(150, 44), order = 8, textSize = 15, z = 12 }, function()
+	UI.button({ name = "AutoFill", kind = "gold", text = "AUTO-FILL", icon = "lineup", size = UDim2.fromOffset(150, 44), order = 8, textSize = 15, z = 12 }, function()
 		local res = Remotes.AutoFillLineup:InvokeServer()
 		if res.ok then
 			toast("Lineup filled with your best cards", C.Gold)
@@ -1319,6 +1325,13 @@ local function hubCard(key, title, iconName, accent, width, contentHeight, paren
 		card.apply(s, true)
 		saveHub(key, s)
 		UI.clickSound()
+		if s == "open" and vsize().Y < 700 then
+			for _, other in hubCards do
+				if other ~= card and other.root.Parent == parent and other.state == "open" then
+					other.apply("collapsed", true)
+				end
+			end
+		end
 	end
 	minBtn.Activated:Connect(toggle)
 	header.Activated:Connect(toggle)
@@ -1593,7 +1606,22 @@ end
 
 -- scale the columns to fit between the top bar and the dock (and narrow screens)
 function fitHub()
-	local w, h = gui.AbsoluteSize.X, gui.AbsoluteSize.Y
+	local w, h = vsize().X, vsize().Y
+	-- short screens (phones): one open card per column, so the open one is big enough to read
+	if h < 700 then
+		for _, col in { leftCol, rightCol } do
+			local seenOpen = false
+			for _, key in { "featured", "challenges", "topcard" } do
+				local card = hubCards[key]
+				if card and card.root.Parent == col and card.state == "open" then
+					if seenOpen then
+						card.apply("collapsed", false)
+					end
+					seenOpen = true
+				end
+			end
+		end
+	end
 	local dockTop = h - 18 - 110 * dock.Fit.Scale
 	local avail = dockTop - 152 - 14
 	local function need(col)
@@ -1616,7 +1644,6 @@ function fitHub()
 		updateColumns()
 	end
 end
-gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitHub)
 
 -- the eye menu: SHOW / MIN / HIDE per card, plus a clean view
 local layoutMenu = UI.glass({ Name = "LayoutMenu", Visible = false, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -258, 0, 122), Size = UDim2.fromOffset(330, 262), ZIndex = 90 })
@@ -1675,6 +1702,9 @@ local function applyHubSettings(saved)
 	for key, card in hubCards do
 		card.apply(hubSettings[key] or "open", false)
 	end
+	if vsize().Y < 700 and hubCards.featured.state == "open" and hubCards.challenges.state == "open" then
+		hubCards.challenges.apply("collapsed", false) -- phones: one card open at a time
+	end
 	applyClean()
 	fitHub()
 	-- entrance: side columns slide in, the dock rises
@@ -1713,9 +1743,10 @@ RunService.RenderStepped:Connect(function(dt)
 			-- face the camera
 			root.CFrame = CFrame.lookAt(root.Position, root.Position + Vector3.new(0, 0, 1))
 		end
-		-- stand still on the stage while you're in menus
+		-- stand still on the stage while you're in menus (and no joystick on phones)
 		hum.WalkSpeed = 0
 		hum.JumpHeight = 0
+		GuiService.TouchControlsEnabled = false
 		cam.CameraType = Enum.CameraType.Scriptable
 		local t = os.clock()
 		local base = root.Position
@@ -1737,8 +1768,8 @@ RunService.RenderStepped:Connect(function(dt)
 		showroomOn = false
 		if hum then
 			hum.WalkSpeed = 16 -- the game sets each player's real speed
-			hum.JumpHeight = 7.2
 		end
+		GuiService.TouchControlsEnabled = true
 		pedestal.Parent = nil
 		pedestalGlow.Parent = nil
 	end
@@ -2184,7 +2215,7 @@ end
 function openDifficulty(tab)
 	playTab = tab or playTab
 	diffModal:ClearAllChildren()
-	new("UIScale", { Name = "Fit", Scale = math.clamp(math.min((gui.AbsoluteSize.X - 24) / 880, (gui.AbsoluteSize.Y - 24) / 480), 0.4, 1) }).Parent = diffModal
+	new("UIScale", { Name = "Fit", Scale = math.clamp(math.min((vsize().X - 24) / 880, (vsize().Y - 24) / 480), 0.4, 1) }).Parent = diffModal
 	UI.corner(14).Parent = diffModal
 	UI.stroke(C.Accent, 2).Parent = diffModal
 	UI.text({ Text = "PLAY", FontFace = F.Display, TextScaled = false, TextSize = 36, Size = UDim2.fromOffset(120, 44), Position = UDim2.fromOffset(24, 14), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 71 }).Parent = diffModal
@@ -2513,6 +2544,184 @@ function renderLocker()
 end
 
 -- =========================================================================================
+-- Tutorial (first visit): a coach spotlights each step - lineup, AUTO-FILL, PLAY, ROOKIE.
+-- The first game coaches every play (MatchUI) and finishing it earns a free Starter Pack.
+-- =========================================================================================
+local tutorialGui = new("ScreenGui", { Name = "TutorialUI", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 50, Enabled = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling })
+tutorialGui.Parent = player:WaitForChild("PlayerGui")
+local dims = {}
+for i = 1, 4 do
+	dims[i] = new("TextButton", { AutoButtonColor = false, Text = "", BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.45, BorderSizePixel = 0 })
+	dims[i].Parent = tutorialGui
+end
+local ring = new("Frame", { BackgroundTransparency = 1, ZIndex = 5 }, { UI.corner(16) })
+local ringStroke = UI.stroke(C.Gold, 3, 0)
+ringStroke.Parent = ring
+ring.Parent = tutorialGui
+TweenService:Create(ringStroke, TweenInfo.new(0.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Thickness = 6, Transparency = 0.4 }):Play()
+local bubble = UI.glass({ Name = "Bubble", Size = UDim2.fromOffset(440, 0), AutomaticSize = Enum.AutomaticSize.Y, ZIndex = 10 })
+bubble:FindFirstChildOfClass("UIStroke").Color = C.Gold
+bubble.Parent = tutorialGui
+local bubbleScale = new("UIScale")
+bubbleScale.Parent = bubble
+new("UIPadding", { PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 14), PaddingLeft = UDim.new(0, 18), PaddingRight = UDim.new(0, 18) }).Parent = bubble
+new("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }).Parent = bubble
+local bubbleTop = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 24), LayoutOrder = 1, ZIndex = 11 })
+bubbleTop.Parent = bubble
+UI.chip("COACH", C.Gold, { TextColor3 = C.BG, ZIndex = 12 }).Parent = bubbleTop
+local stepLabel = UI.text({ Text = "", FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 12, AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromScale(1, 0), Size = UDim2.fromOffset(120, 22), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 12 })
+stepLabel.Parent = bubbleTop
+local bubbleText = UI.text({ Text = "", FontFace = F.Display, TextScaled = false, TextSize = 22, TextWrapped = true, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 2, ZIndex = 11 })
+bubbleText.Parent = bubble
+local bubbleButtons = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 40), LayoutOrder = 3, ZIndex = 11 }, {
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Right, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }),
+})
+bubbleButtons.Parent = bubble
+
+local tutorialActive = false
+local function runTutorial()
+	if tutorialActive then
+		return
+	end
+	tutorialActive = true
+	local steps = {
+		{ text = "Welcome to GRIDIRON DYNASTY! Collect cards of real-life football players, build your 7v7 team and play live games. Let's set up your team.", next = "LET'S GO" },
+		{ target = function() return lineupTile end, text = "This is your LINEUP: your starters on offense and defense. " .. (ScreenFit.IsTouch() and "Tap it!" or "Click it!") },
+		{ target = function() return lineupPanel.Visible and lineupPanel:FindFirstChild("AutoFill", true) end, text = "AUTO-FILL puts your best card at every spot. Try it!" },
+		{ target = function() return lineupPanel.Visible and lineupPanel:FindFirstChild("Close", true) end, text = "Your team is ready. Close the lineup." },
+		{ target = function() return playButton end, text = "Time for your first game! Hit PLAY." },
+		{ target = function() return diffModal.Visible and diffModal:FindFirstChild("rookieCard", true) end, text = "Start on ROOKIE - an easier team while you learn. I'll coach you through every play!" },
+	}
+	local index, conn, render = 0, nil, nil
+	local function finish(skipped)
+		tutorialActive = false
+		tutorialGui.Enabled = false
+		if render then
+			render:Disconnect()
+		end
+		if conn then
+			conn:Disconnect()
+		end
+		if skipped then
+			task.spawn(function()
+				pcall(function()
+					Remotes.TutorialAction:InvokeServer("skip")
+				end)
+			end)
+		end
+	end
+	local nextStep
+	function nextStep()
+		index += 1
+		if conn then
+			conn:Disconnect()
+			conn = nil
+		end
+		local step = steps[index]
+		if not step then
+			finish(false) -- the game itself coaches from here
+			return
+		end
+		bubbleText.Text = step.text
+		stepLabel.Text = ("STEP %d OF %d"):format(index, #steps)
+		bubbleButtons:ClearAllChildren()
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Right, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }).Parent = bubbleButtons
+		UI.button({ kind = "dark", text = "SKIP TUTORIAL", size = UDim2.fromOffset(150, 38), order = 1, textSize = 13, z = 12 }, function()
+			finish(true)
+		end).Parent = bubbleButtons
+		if step.next then
+			UI.button({ kind = "gold", text = step.next, size = UDim2.fromOffset(150, 38), order = 2, textSize = 16, z = 12 }, nextStep).Parent = bubbleButtons
+		end
+		UI.pop(bubble, 0.25)
+	end
+
+	-- every frame: cut the spotlight hole around the current target, place the bubble
+	local hooked
+	render = RunService.RenderStepped:Connect(function()
+		local step = steps[index]
+		if not step then
+			return
+		end
+		bubbleScale.Scale = math.clamp(fitter and fitter.scale() or 1, 0.6, 1)
+		local screen = tutorialGui.AbsoluteSize
+		local target = step.target and step.target()
+		if target and target:IsA("GuiObject") and target.AbsoluteSize.X > 0 then
+			if hooked ~= target then
+				hooked = target
+				if conn then
+					conn:Disconnect()
+				end
+				if target:IsA("GuiButton") then
+					conn = target.Activated:Connect(function()
+						task.defer(nextStep)
+					end)
+				end
+			end
+			-- AbsolutePosition is measured below the top bar; this overlay ignores the inset
+			local pos, size = target.AbsolutePosition + GuiService:GetGuiInset(), target.AbsoluteSize
+			local pad = 8
+			local x0, y0 = pos.X - pad, pos.Y - pad
+			local x1, y1 = pos.X + size.X + pad, pos.Y + size.Y + pad
+			dims[1].Position, dims[1].Size = UDim2.fromOffset(0, 0), UDim2.fromOffset(screen.X, math.max(0, y0))
+			dims[2].Position, dims[2].Size = UDim2.fromOffset(0, y1), UDim2.fromOffset(screen.X, math.max(0, screen.Y - y1))
+			dims[3].Position, dims[3].Size = UDim2.fromOffset(0, y0), UDim2.fromOffset(math.max(0, x0), y1 - y0)
+			dims[4].Position, dims[4].Size = UDim2.fromOffset(x1, y0), UDim2.fromOffset(math.max(0, screen.X - x1), y1 - y0)
+			ring.Visible = true
+			ring.Position, ring.Size = UDim2.fromOffset(x0, y0), UDim2.fromOffset(x1 - x0, y1 - y0)
+			-- bubble above the target if it's low on screen, otherwise below
+			local bw = bubble.AbsoluteSize.X
+			local bh = bubble.AbsoluteSize.Y
+			local bx = math.clamp((x0 + x1) / 2 - bw / 2, 12, screen.X - bw - 12)
+			local by = (y0 > screen.Y * 0.5) and (y0 - bh - 18) or (y1 + 18)
+			bubble.Position = UDim2.fromOffset(bx, math.clamp(by, 12, screen.Y - bh - 12))
+		else
+			-- no target (welcome) or it isn't on screen yet: dim everything, bubble in the middle
+			hooked = nil
+			dims[1].Position, dims[1].Size = UDim2.fromOffset(0, 0), UDim2.fromOffset(screen.X, screen.Y)
+			for i = 2, 4 do
+				dims[i].Size = UDim2.fromOffset(0, 0)
+			end
+			ring.Visible = false
+			bubble.Position = UDim2.fromOffset(screen.X / 2 - bubble.AbsoluteSize.X / 2, screen.Y / 2 - bubble.AbsoluteSize.Y / 2)
+		end
+	end)
+	tutorialGui.Enabled = true
+	nextStep()
+end
+
+local tutorialChecked = false
+local function maybeStartTutorial(inv)
+	if tutorialChecked or not inv or workspace:GetAttribute("MatchServer") then
+		return
+	end
+	tutorialChecked = true
+	if inv.tutorial == "done" then
+		return
+	end
+	task.delay(5, function()
+		while dailyModal.Visible or not gui.Enabled do
+			task.wait(0.5)
+		end
+		runTutorial()
+	end)
+end
+
+-- Studio only: replay the hub tutorial for testing (player.DevTutorial:Invoke())
+if RunService:IsStudio() then
+	local dev = Instance.new("BindableFunction")
+	dev.Name = "DevTutorial"
+	dev.OnInvoke = function()
+		task.spawn(runTutorial)
+		return true
+	end
+	dev.Parent = player
+end
+
+Remotes:WaitForChild("TutorialDone").OnClientEvent:Connect(function()
+	toast("TUTORIAL COMPLETE! Here's a free Starter Pack", C.Gold)
+end)
+
+-- =========================================================================================
 -- Inventory sync
 -- =========================================================================================
 local function applyInventory(inv)
@@ -2527,6 +2736,7 @@ local function applyInventory(inv)
 	state.jersey = inv.jersey or state.jersey
 	state.difficulty = inv.difficulty or state.difficulty
 	applyHubSettings(inv.hub)
+	maybeStartTutorial(inv)
 	local rating = inv.h2h and inv.h2h.rating or RankConfig.StartRating
 	local div = RankConfig.Division(rating)
 	divisionChip.Text = div.name
@@ -2560,6 +2770,11 @@ end
 
 Remotes:WaitForChild("InventoryChanged").OnClientEvent:Connect(applyInventory)
 gui.Parent = player:WaitForChild("PlayerGui")
+fitter = ScreenFit.Apply(gui)
+fitter.changed:Connect(function()
+	fitDock()
+	fitHub()
+end)
 fitDock()
 fitHub()
 task.spawn(function()

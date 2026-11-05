@@ -109,13 +109,15 @@ function StoreService.Start(remoteFolder)
 			remotes.CoinsPurchased:FireClient(player, { vip = true })
 		end
 	end)
-	PlayerData.Changed.Event:Connect(function(player, profile)
-		if not profile.dailyChecked then
-			profile.dailyChecked = true
+	local dailyChecked = {} -- [Player] = true (a flag on the profile would land on a copy)
+	PlayerData.Changed.Event:Connect(function(player)
+		if not dailyChecked[player] then
+			dailyChecked[player] = true
 			task.delay(3, dailyLogin, player) -- give the client a moment to load its UI
 		end
 	end)
 	Players.PlayerRemoving:Connect(function(player)
+		dailyChecked[player] = nil
 		vipCache[player] = nil
 	end)
 end

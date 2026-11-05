@@ -359,6 +359,7 @@ local function stateFor(m, viewer, side, message, color)
 		messageColor = col and col:ToHex(),
 		final = m.final and m.final[side],
 		difficulty = m.modeLabel,
+		tutorial = m.tutorial or nil,
 	}
 end
 
@@ -1988,6 +1989,8 @@ local function createMatch(opts)
 		h2h = h2h,
 		ranked = opts.mode == "ranked",
 		modeLabel = h2h and (opts.mode == "ranked" and "RANKED" or "FRIENDLY") or difficulty.name,
+		-- a new player's first game: the match UI coaches every step
+		tutorial = not h2h and profileA ~= nil and (profileA.data.tutorial ~= "done" or (RunService:IsStudio() and a:GetAttribute("DevTutorial") == true)),
 		humans = { user = a, cpu = b },
 		alive = true,
 		token = 0,

@@ -14,6 +14,7 @@ local files = {
 	"ServerScriptService/Modules/H2HService.lua",
 	"ServerScriptService/Modules/MatchServer.lua",
 	"ReplicatedStorage/Client/JerseyFX.lua",
+	"ReplicatedStorage/Client/ScreenFit.lua",
 	"ReplicatedStorage/Shared/PackConfig.lua",
 	"ReplicatedStorage/Shared/LineupConfig.lua",
 	"ServerScriptService/Modules/LineupService.lua",

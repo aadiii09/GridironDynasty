@@ -142,10 +142,15 @@ function LineupService.Start(remotes)
 		return { ok = LineupService.AutoFill(player) }
 	end
 	-- Fill an empty lineup for anyone who has cards but no lineup yet; tidy everyone else's.
-	PlayerData.Changed.Event:Connect(function(player, profile)
-		local data = profile.data
-		if next(data.lineup) == nil and next(data.cards) ~= nil and data.starterGiven and not profile.lineupChecked then
-			profile.lineupChecked = true
+	local lineupChecked = {} -- [Player] = true (a flag on the profile would land on a copy)
+	game:GetService("Players").PlayerRemoving:Connect(function(player)
+		lineupChecked[player] = nil
+	end)
+	PlayerData.Changed.Event:Connect(function(player)
+		local profile = PlayerData.Get(player)
+		local data = profile and profile.data
+		if data and next(data.lineup) == nil and next(data.cards) ~= nil and data.starterGiven and not lineupChecked[player] then
+			lineupChecked[player] = true
 			task.defer(LineupService.AutoFill, player)
 		end
 	end)
