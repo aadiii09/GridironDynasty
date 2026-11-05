@@ -496,18 +496,22 @@ local function renderPacks(body)
 		tileFrame:FindFirstChildOfClass("UIStroke").Color = pack.color
 		tileFrame:FindFirstChildOfClass("UIStroke").Thickness = 2
 		UI.flowGradient(new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.82, Size = UDim2.new(1, 0, 0, 250), ZIndex = 12, Parent = tileFrame }, { UI.corner(14) }), pack.color, pack.color:Lerp(Color3.new(0, 0, 0), 0.7), pack.color)
+		local storeArt = Assets.store[pack.id]
 		local art = new("ImageLabel", {
-			BackgroundTransparency = Assets.pack ~= "" and 1 or 0,
+			BackgroundTransparency = (storeArt or Assets.pack ~= "") and 1 or 0,
 			BackgroundColor3 = pack.color,
-			Image = Assets.pack,
-			ImageColor3 = pack.color,
-			Size = UDim2.fromOffset(150, 218),
-			Position = UDim2.new(0.5, -75, 0, 14),
+			Image = storeArt or Assets.pack,
+			ImageColor3 = storeArt and Color3.new(1, 1, 1) or pack.color,
+			ScaleType = storeArt and Enum.ScaleType.Crop or Enum.ScaleType.Stretch,
+			Size = storeArt and UDim2.new(1, -8, 0, 240) or UDim2.fromOffset(150, 218),
+			Position = storeArt and UDim2.fromOffset(4, 4) or UDim2.new(0.5, -75, 0, 14),
 			ZIndex = 13,
-		})
+		}, storeArt and { UI.corner(12) } or nil)
 		art.Parent = tileFrame
-		UI.text({ Text = string.upper(pack.name):gsub(" PACK", ""):gsub("DAILY FREE", "DAILY"), FontFace = F.Display, TextColor3 = C.Text, TextStrokeTransparency = 0.3, Size = UDim2.new(0.9, 0, 0, 38), Position = UDim2.new(0.05, 0, 0, 152), ZIndex = 14 }).Parent = art
-		UI.text({ Text = ("%d CARDS"):format(pack.cards), FontFace = F.Display, TextColor3 = C.BG, TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 0, 22), ZIndex = 14 }).Parent = art
+		if not storeArt then
+			UI.text({ Text = string.upper(pack.name):gsub(" PACK", ""):gsub("DAILY FREE", "DAILY"), FontFace = F.Display, TextColor3 = C.Text, TextStrokeTransparency = 0.3, Size = UDim2.new(0.9, 0, 0, 38), Position = UDim2.new(0.05, 0, 0, 152), ZIndex = 14 }).Parent = art
+		end
+		UI.text({ Text = ("%d CARDS"):format(pack.cards), FontFace = F.Display, TextColor3 = storeArt and C.Text or C.BG, TextStrokeTransparency = storeArt and 0.4 or 1, TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 0, storeArt and 14 or 22), ZIndex = 14 }).Parent = art
 		UI.shine(art, 4 + i * 0.4, 15)
 		local rb = PACK_RIBBON[pack.id]
 		if rb then
@@ -560,10 +564,15 @@ local function renderCoins(body)
 		local card = UI.glass({ LayoutOrder = i, ZIndex = 12 })
 		card:FindFirstChildOfClass("UIStroke").Color = C.Gold
 		card:FindFirstChildOfClass("UIStroke").Thickness = b.tag and 2 or 1
-		local art = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.new(1, -16, 0, 140), Position = UDim2.fromOffset(8, 8), ZIndex = 12 }, { UI.corner(12) })
-		UI.flowGradient(art, Color3.fromRGB(90, 60, 10), Color3.fromRGB(200, 140, 20), Color3.fromRGB(90, 60, 10))
+		local art = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.new(1, -16, 0, 140), Position = UDim2.fromOffset(8, 8), ClipsDescendants = true, ZIndex = 12 }, { UI.corner(12) })
 		art.Parent = card
-		coinStack(art, i + 2, 44 + i * 4)
+		if Assets.store[b.id] then
+			art.BackgroundColor3 = Color3.fromRGB(4, 12, 30)
+			new("ImageLabel", { BackgroundTransparency = 1, Image = Assets.store[b.id], ScaleType = Enum.ScaleType.Crop, Size = UDim2.fromScale(1, 1), ZIndex = 13 }, { UI.corner(12) }).Parent = art
+		else
+			UI.flowGradient(art, Color3.fromRGB(90, 60, 10), Color3.fromRGB(200, 140, 20), Color3.fromRGB(90, 60, 10))
+			coinStack(art, i + 2, 44 + i * 4)
+		end
 		UI.shine(art, 3.5 + i * 0.5, 30)
 		if b.tag then
 			UI.ribbon(card, b.tag, b.tag == "BEST VALUE" and C.Red or C.Blue, 40)
@@ -607,9 +616,14 @@ local function renderVIP(body)
 	card:FindFirstChildOfClass("UIStroke").Color = C.Gold
 	card:FindFirstChildOfClass("UIStroke").Thickness = 2
 	local hero = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.new(0.42, -12, 1, -24), Position = UDim2.fromOffset(12, 12), ZIndex = 12 }, { UI.corner(14) })
-	UI.flowGradient(hero, Color3.fromRGB(255, 196, 46), Color3.fromRGB(255, 120, 30), Color3.fromRGB(200, 60, 160))
-	UI.icon("trophy", { Size = UDim2.fromScale(0.55, 0.55), SizeConstraint = Enum.SizeConstraint.RelativeYY, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.42), ImageColor3 = Color3.new(1, 1, 1), ZIndex = 13 }).Parent = hero
-	UI.text({ Text = "VIP", FontFace = F.Display, TextColor3 = Color3.new(1, 1, 1), TextStrokeTransparency = 0.5, Size = UDim2.new(1, 0, 0.2, 0), Position = UDim2.fromScale(0, 0.74), ZIndex = 13 }).Parent = hero
+	if Assets.store.vip then
+		hero.BackgroundColor3 = Color3.fromRGB(12, 18, 46) -- the art's own navy, so the sides blend in
+		new("ImageLabel", { BackgroundTransparency = 1, Image = Assets.store.vip, ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromScale(1, 1), ZIndex = 13 }).Parent = hero
+	else
+		UI.flowGradient(hero, Color3.fromRGB(255, 196, 46), Color3.fromRGB(255, 120, 30), Color3.fromRGB(200, 60, 160))
+		UI.icon("trophy", { Size = UDim2.fromScale(0.55, 0.55), SizeConstraint = Enum.SizeConstraint.RelativeYY, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.42), ImageColor3 = Color3.new(1, 1, 1), ZIndex = 13 }).Parent = hero
+		UI.text({ Text = "VIP", FontFace = F.Display, TextColor3 = Color3.new(1, 1, 1), TextStrokeTransparency = 0.5, Size = UDim2.new(1, 0, 0.2, 0), Position = UDim2.fromScale(0, 0.74), ZIndex = 13 }).Parent = hero
+	end
 	UI.shine(hero, 3, 20)
 	hero.Parent = card
 	local right = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(0.58, -24, 1, -24), Position = UDim2.new(0.42, 12, 0, 12), ZIndex = 12 }, {
@@ -1441,14 +1455,14 @@ local slides = {
 	{
 		kicker = "FEATURED PACK", title = "THE DYNASTY PACK", sub = "10 CARDS  -  GUARANTEED ELITE OR BETTER",
 		detail = function() return tierOddsText("dynasty") end,
-		c1 = Color3.fromRGB(20, 160, 90), c2 = Color3.fromRGB(8, 40, 30), art = "pack", tint = Color3.fromRGB(46, 255, 140),
+		c1 = Color3.fromRGB(20, 160, 90), c2 = Color3.fromRGB(8, 40, 30), art = "pack", tint = Color3.fromRGB(46, 255, 140), img = Assets.store.dynasty,
 		button = function() return "SHOP NOW", "primary" end,
 		action = function() openStore("PACKS") end,
 	},
 	{
 		kicker = "BEST VALUE", title = "55,000 COINS", sub = "+43% BONUS  -  OPEN 22 STARTER PACKS",
 		detail = function() return "COINS ALSO COME FROM WINS, DAILY LOGINS AND QUICK-SELLS" end,
-		c1 = Color3.fromRGB(230, 150, 20), c2 = Color3.fromRGB(70, 40, 6), art = "coins",
+		c1 = Color3.fromRGB(230, 150, 20), c2 = Color3.fromRGB(70, 40, 6), art = "coins", img = Assets.store.coins_4,
 		button = function() return "R$ 499", "gold" end,
 		action = function()
 			local res = Remotes.PromptCoins:InvokeServer("coins_4")
@@ -1460,7 +1474,7 @@ local slides = {
 	{
 		kicker = "VIP PASS", title = "DOUBLE EVERY COIN", sub = "2X GAME REWARDS + 2X DAILY BONUS  -  FOREVER",
 		detail = function() return "ONE-TIME PURCHASE" end,
-		c1 = Color3.fromRGB(200, 60, 200), c2 = Color3.fromRGB(40, 10, 60), art = "trophy",
+		c1 = Color3.fromRGB(200, 60, 200), c2 = Color3.fromRGB(40, 10, 60), art = "trophy", img = Assets.store.vip,
 		button = function()
 			if state.store and state.store.vip then
 				return "OWNED", "disabled"
@@ -1509,7 +1523,9 @@ local function showSlide(i)
 	-- art on the right
 	local artHolder = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(150, 196), Position = UDim2.new(1, -156, 0, 4), ZIndex = 3 })
 	artHolder.Parent = slideHolder
-	if s.art == "pack" then
+	if s.img then
+		new("ImageLabel", { BackgroundTransparency = 1, Image = s.img, ScaleType = Enum.ScaleType.Crop, Size = UDim2.new(1, -6, 1, -10), Position = UDim2.fromOffset(2, 5), ZIndex = 4 }, { UI.corner(12), UI.stroke(Color3.new(1, 1, 1), 1, 0.7) }).Parent = artHolder
+	elseif s.art == "pack" then
 		new("ImageLabel", { BackgroundTransparency = 1, Image = Assets.pack, ImageColor3 = s.tint, Size = UDim2.fromOffset(118, 171), Position = UDim2.fromOffset(18, 10), Rotation = 8, ZIndex = 4 }).Parent = artHolder
 	elseif s.art == "standout" then
 		local _, list = latestStandouts()

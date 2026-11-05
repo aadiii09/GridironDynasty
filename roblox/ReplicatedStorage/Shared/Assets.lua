@@ -7,6 +7,17 @@ local Assets = {
 	card_frame = "rbxassetid://81240714723668",
 	card_tint = "rbxassetid://86116116326318",
 	pack = "rbxassetid://74881757179517",
+	-- store art (art/store/): Robux packs, Coin bundles (by bundle id) and the VIP pass
+	store = {
+		pro = "rbxassetid://91195024515442",
+		elite = "rbxassetid://100699961394818",
+		dynasty = "rbxassetid://132148842196377",
+		coins_1 = "rbxassetid://129923812458215",
+		coins_2 = "rbxassetid://136418839964180",
+		coins_3 = "rbxassetid://105045640096912",
+		coins_4 = "rbxassetid://89311873124476",
+		vip = "rbxassetid://79969156479646",
+	},
 	rays = "rbxassetid://85347393071192",
 	icon_close = "rbxassetid://91790189111712",
 	icon_eye = "rbxassetid://120459926023881",
