@@ -1861,6 +1861,21 @@ for i, def in SettingsConfig.Order do
 		toggleRow(def, i)
 	end
 end
+-- CONTROLS: rebind every game key (PC; phones use the on-screen buttons)
+do
+	local KeybindsUI = require(ReplicatedStorage.Client.KeybindsUI)
+	KeybindsUI.Init(gui, saveSetting)
+	local row = new("TextButton", { Name = "Controls", AutoButtonColor = false, Text = "", BackgroundColor3 = C.Panel2, BackgroundTransparency = 0.35, Size = UDim2.new(1, 0, 0, 52), LayoutOrder = 50, Visible = UserInputService.KeyboardEnabled, ZIndex = 91 }, { UI.corner(10) })
+	row.Parent = settingsPanel
+	UI.text({ Text = "CONTROLS", FontFace = F.Bold, TextScaled = false, TextSize = 14, Position = UDim2.fromOffset(12, 7), Size = UDim2.new(1, -90, 0, 18), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 92 }).Parent = row
+	UI.text({ Text = "Change your keys (catch, juke, throw...)", FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 12, Position = UDim2.fromOffset(12, 27), Size = UDim2.new(1, -90, 0, 16), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 92 }).Parent = row
+	UI.text({ Text = "EDIT  >", FontFace = F.Heavy, TextColor3 = C.Accent, TextScaled = false, TextSize = 14, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(70, 20), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 92 }).Parent = row
+	row.Activated:Connect(function()
+		UI.clickSound()
+		settingsPanel.Visible = false
+		KeybindsUI.Toggle(true)
+	end)
+end
 UI.text({ Text = "Saved to your account.", FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 11, Size = UDim2.new(1, 0, 0, 14), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 99, ZIndex = 91 }).Parent = settingsPanel
 
 function openSettings()
@@ -2431,12 +2446,12 @@ function openDifficulty(tab)
 	UI.corner(14).Parent = diffModal
 	UI.stroke(C.Accent, 2).Parent = diffModal
 	UI.text({ Text = "PLAY", FontFace = F.Display, TextScaled = false, TextSize = 36, Size = UDim2.fromOffset(120, 44), Position = UDim2.fromOffset(24, 14), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 71 }).Parent = diffModal
-	local tabs = new("Frame", { Name = "Tabs", BackgroundTransparency = 1, Size = UDim2.fromOffset(640, 44), Position = UDim2.fromOffset(130, 16), ZIndex = 71 }, {
-		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }),
+	local tabs = new("Frame", { Name = "Tabs", BackgroundTransparency = 1, Size = UDim2.fromOffset(660, 44), Position = UDim2.fromOffset(128, 16), ZIndex = 71 }, {
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 7), SortOrder = Enum.SortOrder.LayoutOrder }),
 	})
 	tabs.Parent = diffModal
-	for i, t in { { "cpu", "VS CPU", "primary" }, { "ranked", "RANKED", "gold" }, { "friendly", "FRIENDLY", "blue" }, { "custom", "CUSTOM 7v7", "purple" } } do
-		UI.button({ name = "Tab_" .. t[1], kind = playTab == t[1] and t[3] or "dark", text = t[2], size = UDim2.fromOffset(150, 42), order = i, textSize = 17, z = 72 }, function()
+	for i, t in { { "cpu", "VS CPU", "primary" }, { "ranked", "RANKED", "gold" }, { "friendly", "FRIENDLY", "blue" }, { "custom", "CUSTOM 7v7", "purple" }, { "practice", "PRACTICE", "dark" } } do
+		UI.button({ name = "Tab_" .. t[1], kind = playTab == t[1] and (t[1] == "practice" and "gold" or t[3]) or "dark", text = t[2], size = UDim2.fromOffset(124, 42), order = i, textSize = 15, z = 72 }, function()
 			openDifficulty(t[1])
 		end).Parent = tabs
 	end
@@ -2450,6 +2465,21 @@ function openDifficulty(tab)
 		renderCpuTab(body)
 	elseif playTab == "custom" then
 		require(ReplicatedStorage.Client.CustomLobbyUI).Render(body)
+	elseif playTab == "practice" then
+		require(ReplicatedStorage.Client.PracticeUI).Render(body, {
+			start = function(drillId)
+				diffModal.Visible = false
+				closePanels()
+				task.spawn(function()
+					local ok, res = pcall(function()
+						return Remotes:WaitForChild("StartPractice"):InvokeServer(drillId)
+					end)
+					if not ok or not res or not res.ok then
+						toast(res and res.err or "Couldn't start practice", C.Red)
+					end
+				end)
+			end,
+		})
 	else
 		local info = Remotes.GetH2HInfo:InvokeServer()
 		if not diffModal.Visible or body.Parent == nil then

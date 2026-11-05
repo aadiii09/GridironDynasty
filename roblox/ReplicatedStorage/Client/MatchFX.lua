@@ -158,8 +158,8 @@ local function avatarPose()
 		return localPose
 	end
 	local userBall = state.possession == "user"
-	if state.mode == "custom" then
-		-- custom games: the stance of the spot you play
+	if state.mode == "custom" or state.mode == "practice" then
+		-- custom games / practice: the stance of the spot you play
 		local pos = state.control and state.control.pos
 		if state.phase == "presnap" or state.phase == "playcall" or state.phase == "defcall" or state.phase == "waiting" then
 			return pos == "QB" and "qb" or ((pos == "OL" or pos == "DL") and "stance3" or "stance2")

@@ -115,11 +115,31 @@ local function sideOf(m, player)
 	return m.viewers[player]
 end
 
+-- Practice: a solo custom game that never ends and pays nothing. Each drill puts you at one spot
+-- (the AI plays everyone else) and calls the plays that give you reps there. You can switch drills
+-- any time (the "drill" action). side = who has the ball in that drill.
+local PRACTICE = {
+	qb = { off = "QB", def = "CB1", side = "user", label = "QB: PASSING" }, -- you call the plays
+	wr = { off = "WR1", def = "CB1", side = "user", label = "WR: CATCHING", call = "pass" }, -- the QB throws to you
+	rb = { off = "RB", def = "CB1", side = "user", label = "RB: RUNNING", call = "run" }, -- handoffs to you
+	cover = { off = "QB", def = "CB1", side = "cpu", label = "DB: COVERAGE", call = "pass", defCall = "man" }, -- you cover WR1
+	tackle = { off = "QB", def = "LB1", side = "cpu", label = "LB: TACKLING", call = "run" }, -- stop the run
+}
+MatchService.PracticeDrills = PRACTICE
+
+local function practiceDrill(m)
+	return m.practice and PRACTICE[m.practice.drill]
+end
+
 -- Who calls the play for a side right now: the side's human (vs CPU / head-to-head); in custom
 -- games the QB on offense, otherwise the team captain (first player on it). nil = the AI calls.
 local function callerFor(m, side)
 	if not m.custom then
 		return m.humans[side]
+	end
+	local drill = practiceDrill(m)
+	if drill and (drill.call or side ~= m.possession) then
+		return nil -- practice: the AI calls (except your plays as the QB)
 	end
 	if side == m.possession and m.units then
 		local qb = m.units.Offense.QB
@@ -156,6 +176,9 @@ end
 
 -- Who may snap: the offense (its caller in custom games), or the defense when the AI has the ball
 local function canSnapFor(m, player, side)
+	if m.practice then
+		return true -- alone on the field: you snap when you're set
+	end
 	if not m.custom then
 		return side == m.possession or not offHuman(m)
 	end
@@ -443,6 +466,7 @@ local function stateFor(m, viewer, side, message, color)
 		final = m.final and m.final[side],
 		difficulty = m.modeLabel,
 		tutorial = m.tutorial or nil,
+		practice = m.practice and { drill = m.practice.drill, label = practiceDrill(m).label, reps = m.practice.reps } or nil,
 	}
 end
 
@@ -966,7 +990,7 @@ end
 
 -- Play engine --------------------------------------------------------------------------------
 
-local endPlay, throwBall, doMove -- forward
+local endPlay, throwBall, doMove, beginPresnap -- forward
 
 -- The ball carrier's ratings (the card of whoever has the ball)
 local function carrierAttrs(m)
@@ -1128,6 +1152,24 @@ local function cpuQbDecide(m, now)
 		local score = math.min(open, 12) + (ry - m.los) * 0.05 + rng:NextNumber(-misread, misread)
 		if not bestScore or score > bestScore then
 			best, bestScore, bestOpen = rcv, score, open
+		end
+	end
+	local drill = practiceDrill(m)
+	if drill and m.practice.drill == "wr" and play.routes.WR1 then
+		-- receiver drill: the ball's coming to you, once you're into your route
+		play.practiceAt = play.practiceAt or (m.call.id == "deep" and rng:NextNumber(2.3, 2.9) or rng:NextNumber(1.5, 2.1))
+		if t >= play.practiceAt then
+			throwBall(m, m.units.Offense.WR1)
+		end
+		return
+	elseif drill and m.practice.drill == "cover" and play.routes.WR1 then
+		-- coverage drill: most throws go at the man you're covering
+		if play.atMyMan == nil then
+			play.atMyMan = chance(0.7)
+		end
+		if play.atMyMan and t >= play.throwAt then
+			throwBall(m, m.units.Offense.WR1)
+			return
 		end
 	end
 	local poise = 0.5 + qb.attrs.TUP * 0.007 -- calm QBs stand in longer when pressured
@@ -1985,8 +2027,17 @@ local function aiDefCall()
 	return weighted({ { "man", 60 }, { "zone", 25 }, { "blitz", 15 } })
 end
 
+-- practice: the plays that give you reps in this drill
+local function practiceCall(m)
+	local drill = practiceDrill(m)
+	if drill.call == "run" then
+		return MatchConfig.PlaysById.run
+	end
+	return MatchConfig.PlaysById[chance(0.55) and "quick" or "deep"]
+end
+
 -- Both calls are in: line up for the snap
-local function beginPresnap(m)
+function beginPresnap(m)
 	m.play = { state = "presnap" }
 	m.phase = "presnap"
 	if offHuman(m) or m.units.Offense.QB.isProxy then
@@ -2027,13 +2078,22 @@ function nextPlay(m)
 	m.defCall = nil
 	m.phase = "calls"
 	-- the AI side calls at once
+	local drill = practiceDrill(m)
 	if not callerFor(m, m.possession) then
-		m.call = cpuPlayCall(m)
+		m.call = drill and practiceCall(m) or cpuPlayCall(m)
 	end
 	if not callerFor(m, other(m.possession)) then
-		m.defCall = aiDefCall()
+		m.defCall = drill and drill.defCall or aiDefCall()
+	end
+	if drill then
+		m.practice.reps += 1
 	end
 	lineUp(m)
+	if drill and m.call and m.defCall then
+		-- both calls made: straight to the line, you snap when you're set
+		beginPresnap(m)
+		return
+	end
 	m.clockEndsAt = m.clock and (workspace:GetServerTimeNow() + RankConfig.CallSeconds) or nil
 	sendState(m)
 	if m.clockEndsAt then
@@ -2058,6 +2118,10 @@ function startDrive(m, who)
 	m.down = 1
 	m.firstDown = m.los + MatchConfig.FirstDownYards * Y
 	nextPlay(m)
+	if m.practice then
+		sendState(m, "PRACTICE  -  " .. practiceDrill(m).label, GOLD)
+		return
+	end
 	sendState(m, function(_, side)
 		if side == who then
 			return ("YOUR BALL  -  DRIVE %d OF %d"):format(m.drive, MatchConfig.DrivesPerTeam)
@@ -2069,6 +2133,10 @@ function startDrive(m, who)
 end
 
 function nextPossession(m)
+	if m.practice then
+		startDrive(m, practiceDrill(m).side) -- a fresh set of downs, same drill
+		return
+	end
 	if m.possession == "user" then
 		startDrive(m, "cpu")
 	else
@@ -2547,17 +2615,18 @@ local function customSquad(entries, target, aiTeamId)
 	return cards, infos
 end
 
--- spec: { home = { { player, off, def }, ... }, away = { ... }, onEnd = function() }
+-- spec: { home = { { player, off, def }, ... }, away = { ... }, onEnd = function(), practice = drill id }
 local function createCustomMatch(spec)
 	local sides = { user = spec.home or {}, cpu = spec.away or {} }
 	local m = {
-		mode = "custom",
+		mode = spec.practice and "practice" or "custom",
 		custom = true,
+		practice = spec.practice and { drill = spec.practice, reps = 0 } or nil,
 		h2h = false,
 		ranked = false,
-		modeLabel = "CUSTOM",
+		modeLabel = spec.practice and "PRACTICE" or "CUSTOM",
 		noRewards = true,
-		clock = true,
+		clock = not spec.practice,
 		humans = {}, -- (the one-player-per-side controls are off in custom games)
 		viewers = {},
 		ctrl = {}, -- [Player] = { side, off, def }
@@ -2647,9 +2716,9 @@ local function createCustomMatch(spec)
 				table.insert(m.order, e.player)
 			end
 		end
-		log(("CUSTOM: %s (%d, %d players) vs %s (%d, %d players), built in %.1fs"):format(
+		log(("%s: %s (%d, %d players) vs %s (%d, %d players), built in %.1fs"):format(m.modeLabel,
 			teamName(m, "user"), m.user.ratings.ovr, #sides.user, teamName(m, "cpu"), m.cpu.ratings.ovr, #sides.cpu, os.clock() - buildStart))
-		startDrive(m, "user")
+		startDrive(m, m.practice and PRACTICE[m.practice.drill].side or "user")
 	end)
 	if not ok then
 		warn("[Match] couldn't start the custom game:", err)
@@ -2706,6 +2775,55 @@ function MatchService.StartCustom(spec)
 	end
 	local m, err = createCustomMatch(spec)
 	return m ~= nil, err
+end
+
+-- Practice on your own: the PLAY menu's PRACTICE tab. drillId: a key of PRACTICE.
+function MatchService.StartPractice(player, drillId)
+	local drill = PRACTICE[drillId] or PRACTICE.qb
+	return MatchService.StartCustom({
+		home = { { player = player, off = drill.off, def = drill.def } },
+		away = {},
+		practice = PRACTICE[drillId] and drillId or "qb",
+	})
+end
+
+-- Switch drills mid-practice: you move to the drill's spots and a fresh set of downs starts
+local function setDrill(m, player, drillId)
+	local drill = PRACTICE[drillId]
+	local ctrl = m.ctrl[player]
+	if not drill or not ctrl or not m.practice or m.phase == "final" then
+		return
+	end
+	m.practice.drill = drillId
+	-- stop whatever is going on
+	m.token += 1
+	if m.play and m.play.conn then
+		m.play.conn:Disconnect()
+	end
+	m.play = nil
+	m.taken = nil
+	m.av = {}
+	m.moves = {}
+	clearRings(m)
+	-- your stand-ins move to the new spots; the NPCs at those spots step off
+	local team = m[ctrl.side]
+	ctrl.off, ctrl.def = drill.off, drill.def
+	team.proxies = {
+		Offense = { [drill.off] = makeProxy(m, team.off[drill.off], player) },
+		Defense = { [drill.def] = makeProxy(m, team.def[drill.def], player) },
+	}
+	team.off[drill.off]:Hide(true)
+	team.def[drill.def]:Hide(true)
+	for _, side in { m.user, m.cpu } do
+		for _, group in { side.off, side.def } do
+			for _, unit in group do
+				unit.stunUntil = 0
+				unit.engagedUntil = 0
+			end
+		end
+	end
+	log(("practice: %s -> %s"):format(player.Name, drillId))
+	startDrive(m, drill.side)
 end
 
 -- The unit a player is playing right now (vs CPU / head-to-head defender, or any proxy)
@@ -2838,6 +2956,13 @@ local function handleAction(player, action, arg)
 		end
 		mine[arg] = now
 		doMove(m, player, side, arg, now)
+	elseif action == "drill" and m.practice and type(arg) == "string" then
+		local now = os.clock()
+		if now - (m.practice.switchedAt or 0) < 1 then
+			return
+		end
+		m.practice.switchedAt = now
+		setDrill(m, player, arg)
 	elseif action == "leave" then
 		exitPlayer(m, player)
 	end
@@ -2995,6 +3120,24 @@ function MatchService.Start(remoteFolder)
 
 	remotes.MatchAction.OnServerEvent:Connect(handleAction)
 
+	local practiceRemote = remotes:FindFirstChild("StartPractice")
+	if practiceRemote then
+		practiceRemote.OnServerInvoke = function(player, drillId)
+			if matches[player] then
+				return { ok = false, err = "You're already in a game." }
+			end
+			if not ready(player) then
+				return { ok = false, err = "Still loading, try again in a moment." }
+			end
+			local okStart, err = MatchService.StartPractice(player, type(drillId) == "string" and drillId or "qb")
+			if not okStart then
+				warn("[Match] practice didn't start:", err)
+				return { ok = false, err = "Couldn't start practice, please try again." }
+			end
+			return { ok = true }
+		end
+	end
+
 	if RunService:IsStudio() then
 		local dev = remotes:FindFirstChild("DevStartH2H") or Instance.new("RemoteFunction")
 		dev.Name = "DevStartH2H"
@@ -3004,6 +3147,7 @@ function MatchService.Start(remoteFolder)
 		devCustom.Name = "DevStartCustom"
 		devCustom.Parent = remotes
 		devCustom.OnServerInvoke = startCustomTestBot
+		MatchService.DevAction = handleAction -- Studio only: drive a test bot's game from the command bar
 	end
 
 	Players.PlayerRemoving:Connect(function(player)

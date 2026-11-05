@@ -3,7 +3,9 @@
 --   QB in the pocket: higher, leaning toward where you're aiming the throw.
 --   Ball in the air: behind you, looking at where it's coming down.
 --   You have the ball: a chase cam that turns with you.
---   Anyone else (blocking, covering, chasing): behind you, keeping the ball in view.
+--   Anyone else on offense (blocking, running a route): behind you, keeping the ball in view.
+--   On defense: always behind you looking straight at the offense; it never swings to follow the
+--   ball, so your controls stay the same all play.
 -- Everything is smoothed (position and the direction it looks), so switching players or a new
 -- play never cuts hard; big jumps (a new line of scrimmage) snap.
 -- Driven by MatchUI: MatchCamera.Update(state) on every server state, Stop() when the game ends.
@@ -85,6 +87,12 @@ local function targetCFrame(dt)
 		end
 		local h = steer(look - p, dt, 4)
 		return CFrame.lookAt(p - h * 13 + UP * 12.5, look), 6
+	end
+
+	if not userBall then
+		-- defense: a steady view behind you facing the offense (it does not chase the ball)
+		local h = steer(face, dt, 5)
+		return CFrame.lookAt(p - h * 15 + UP * 9, p + h * 16 + UP), 6
 	end
 
 	if live == "air" and s.air then

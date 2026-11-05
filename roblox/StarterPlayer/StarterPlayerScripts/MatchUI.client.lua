@@ -19,6 +19,8 @@ local MatchFX = require(ReplicatedStorage.Client.MatchFX)
 local JerseyFX = require(ReplicatedStorage.Client.JerseyFX)
 local ScreenFit = require(ReplicatedStorage.Client.ScreenFit)
 local Settings = require(ReplicatedStorage.Client.Settings)
+local Keybinds = require(ReplicatedStorage.Client.Keybinds)
+local PracticeUI = require(ReplicatedStorage.Client.PracticeUI)
 local TOUCH = ScreenFit.IsTouch() -- phones/tablets: tap wording, action buttons on the right
 JerseyFX.Start()
 MatchCamera.BallPosition = function()
@@ -156,21 +158,21 @@ local function coachTip(s)
 	if s.phase == "playcall" then
 		return TOUCH and "You have the ball! Tap a play. QUICK PASS is a great first call." or "You have the ball! Pick a play: press 1 for QUICK PASS (or click a card)."
 	elseif s.phase == "presnap" and userBall then
-		return TOUCH and "Tap SNAP to start the play." or "Press SPACE (or click SNAP) to start the play."
+		return TOUCH and "Tap SNAP to start the play." or "Press " .. Keybinds.Text("snap") .. " (or click SNAP) to start the play."
 	elseif s.phase == "live" and userBall and s.playState == "dropback" then
 		return TOUCH and "Throw it! Tap the field next to an open receiver (GREEN ring)." or "Throw it! Aim at an open receiver (GREEN ring) with the mouse and CLICK."
 	elseif s.phase == "live" and userBall and s.playState == "air" then
-		return TOUCH and "You're the receiver now - run to the GOLD CIRCLE and tap CATCH as it arrives!" or "You're the receiver now - run to the GOLD CIRCLE and press C (or click) as it arrives!"
+		return TOUCH and "You're the receiver now - run to the GOLD CIRCLE and tap CATCH as it arrives!" or "You're the receiver now - run to the GOLD CIRCLE and press " .. Keybinds.Text("catch") .. " as it arrives!"
 	elseif s.phase == "live" and userBall and s.playState == "carry" then
-		return TOUCH and "RUN! Tap JUKE or SPIN right before a tackler gets to you." or "RUN! Press Q to juke or R to spin right before a tackler gets to you."
+		return TOUCH and "RUN! Tap JUKE or SPIN right before a tackler gets to you." or "RUN! Press " .. Keybinds.Text("juke") .. " to juke or " .. Keybinds.Text("spin") .. " to spin right before a tackler gets to you."
 	elseif s.phase == "defcall" then
 		return "Now you're on defense. Pick a coverage: MAN COVERAGE is a safe start."
 	elseif s.phase == "presnap" then
-		return TOUCH and "Tap READY when you're set." or "Press SPACE (or click READY) when you're set."
+		return TOUCH and "Tap READY when you're set." or "Press " .. Keybinds.Text("snap") .. " (or click READY) when you're set."
 	elseif s.phase == "live" and s.playState == "air" then
 		return "Ball's in the air! Run to the GOLD CIRCLE to pick it off."
 	elseif s.phase == "live" and s.playState == "carry" then
-		return TOUCH and "Run at the player with the GOLD outline - tap DIVE TACKLE when you're close!" or "Run at the player with the GOLD outline - press E to dive at him when you're close!"
+		return TOUCH and "Run at the player with the GOLD outline - tap DIVE TACKLE when you're close!" or "Run at the player with the GOLD outline - press " .. Keybinds.Text("dive") .. " to dive at him when you're close!"
 	elseif s.phase == "live" then
 		return "Chase the QB or stick with your receiver. You'll jump to whoever is closest when he throws."
 	elseif s.phase == "final" then
@@ -354,6 +356,8 @@ local function render()
 	situation.Text = ("%s & %s   |   %s   |   DRIVE %d/%d%s"):format(ordinal, s.toGo, s.spot, math.min(s.drive, s.drives), s.drives, (s.mode == "ranked" or s.mode == "friendly" or s.mode == "custom") and ("   |   " .. s.difficulty) or "")
 	if s.phase == "final" then
 		situation.Text = ("FINAL   |   %s   |   TEAM RATING  %d vs %d"):format(s.difficulty or "", s.ratings.you.ovr, s.ratings.cpu.ovr)
+	elseif s.practice then
+		situation.Text = ("PRACTICE   |   %s & %s   |   %s   |   REP %d"):format(ordinal, s.toGo, s.spot, s.practice.reps or 0)
 	end
 
 	clearControls()
@@ -369,7 +373,7 @@ local function render()
 			end).Parent = controls
 		end
 	elseif s.phase == "defcall" then
-		hint.Text = ("DEFENSE  -  %s. You're the %s %s"):format(TOUCH and "tap a coverage" or (s.canSwitch and "call a coverage (1-3), Q to switch" or "call a coverage (1-3)"), s.control and s.control.pos or "", s.control and s.control.name or "")
+		hint.Text = ("DEFENSE  -  %s. You're the %s %s"):format(TOUCH and "tap a coverage" or (s.canSwitch and ("call a coverage (1-3), " .. Keybinds.Text("switch") .. " to switch") or "call a coverage (1-3)"), s.control and s.control.pos or "", s.control and s.control.name or "")
 		for i, call in MatchConfig.DefenseCalls do
 			local color = i == 3 and C.Red or C.Blue
 			callCard(i, call.name, call.desc, Assets["play_" .. call.id], color, function()
@@ -388,8 +392,8 @@ local function render()
 			switchButton().Parent = actionHolder()
 		end
 	elseif s.phase == "presnap" and not userBall then
-		hint.Text = ("You're the %s %s%s"):format(s.control and s.control.pos or "", s.control and s.control.name or "", TOUCH and "" or (s.canSwitch and "  -  Space when ready, Q to switch" or "  -  Space when ready"))
-		UI.button({ kind = "primary", icon = "whistle", text = TOUCH and "READY" or "READY  [SPACE]", size = UDim2.fromOffset(TOUCH and 220 or 250, 64), textSize = 18 }, function()
+		hint.Text = ("You're the %s %s%s"):format(s.control and s.control.pos or "", s.control and s.control.name or "", TOUCH and "" or (s.canSwitch and ("  -  " .. Keybinds.Text("snap") .. " when ready, " .. Keybinds.Text("switch") .. " to switch") or ("  -  " .. Keybinds.Text("snap") .. " when ready")))
+		UI.button({ kind = "primary", icon = "whistle", text = TOUCH and "READY" or ("READY  [" .. Keybinds.Text("snap") .. "]"), size = UDim2.fromOffset(TOUCH and 220 or 250, 64), textSize = 18 }, function()
 			MatchAction:FireServer("snap")
 		end).Parent = actionHolder()
 		if s.canSwitch then
@@ -413,13 +417,13 @@ local function render()
 		hint.Text = ("You're the %s  -  %s"):format(pos, s.play == "run" and (pos == "RB" and "you get the handoff!" or "it's a run, block!")
 			or ((pos == "OL" or pos == "TE") and "block for your QB" or "get open, your QB can throw to you"))
 	elseif s.phase == "presnap" then
-		if s.mode == "custom" and not s.canThrow then
+		if (s.mode == "custom" or s.mode == "practice") and not s.canThrow then
 			-- custom game captain (the AI plays QB): you snap it, the QB throws
 			hint.Text = ("You're the %s  -  snap it when you're set, the QB %s"):format(s.control and s.control.pos or "", s.play == "run" and "hands it off" or "throws it")
 		else
-			hint.Text = s.play == "run" and "Snap it and take the handoff" or (TOUCH and "Snap it, then tap the field to throw" or "Snap it, then aim with the mouse and click to throw")
+			hint.Text = s.play == "run" and "Snap it and take the handoff" or (TOUCH and "Snap it, then tap the field to throw" or ("Snap it, then aim with the mouse and press " .. Keybinds.Text("throw") .. " to throw"))
 		end
-		UI.button({ kind = "primary", icon = "football", text = TOUCH and "SNAP" or "SNAP  [SPACE]", size = UDim2.fromOffset(TOUCH and 220 or 250, 64), textSize = 18 }, function()
+		UI.button({ kind = "primary", icon = "football", text = TOUCH and "SNAP" or ("SNAP  [" .. Keybinds.Text("snap") .. "]"), size = UDim2.fromOffset(TOUCH and 220 or 250, 64), textSize = 18 }, function()
 			MatchAction:FireServer("snap")
 		end).Parent = actionHolder()
 	elseif s.phase == "live" and not s.youCarry and not (s.canThrow and s.playState == "dropback") then
@@ -483,6 +487,7 @@ Remotes:WaitForChild("MatchState").OnClientEvent:Connect(function(s)
 	local main = player.PlayerGui:FindFirstChild("GridironUI")
 	if s.phase == "ended" then
 		state = nil
+		PracticeUI.Reset()
 		MatchCamera.Stop()
 		MatchFX.Stop()
 		gui.Enabled = false
@@ -510,6 +515,9 @@ Remotes:WaitForChild("MatchState").OnClientEvent:Connect(function(s)
 		showBanner(s.message, s.messageColor)
 	end
 	render()
+	PracticeUI.Update(gui, s, function(drillId)
+		MatchAction:FireServer("drill", drillId)
+	end)
 	if s.phase == "final" then
 		UI.pop(finalPanel, 0.35)
 	end
@@ -526,13 +534,13 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		return
 	end
 	local n = keyNumbers[input.KeyCode]
-	if input.KeyCode == Enum.KeyCode.Q and state.possession == "cpu" and state.canSwitch then
+	if Keybinds.Is("switch", input) and state.possession == "cpu" and state.canSwitch then
 		MatchAction:FireServer("switch")
 	elseif state.phase == "defcall" and n and MatchConfig.DefenseCalls[n] then
 		MatchAction:FireServer("defcall", MatchConfig.DefenseCalls[n].id)
 	elseif state.phase == "playcall" and n and MatchConfig.Plays[n] then
 		MatchAction:FireServer("call", MatchConfig.Plays[n].id)
-	elseif state.phase == "presnap" and input.KeyCode == Enum.KeyCode.Space and state.canSnap then
+	elseif state.phase == "presnap" and Keybinds.Is("snap", input) and state.canSnap then
 		MatchAction:FireServer("snap")
 	end
 end)
@@ -541,13 +549,14 @@ end)
 -- Context buttons like a real football game: what you can do right now, with its key (PC) or a
 -- tap button (phones). The server turns a well-timed move into a ratings bonus (MatchService).
 local MOVES = {
-	juke = { key = Enum.KeyCode.Q, keyText = "Q", label = "JUKE", cd = 1.2 },
-	spin = { key = Enum.KeyCode.R, keyText = "R", label = "SPIN", cd = 1.2 },
-	stiff = { key = Enum.KeyCode.F, keyText = "F", label = "STIFF ARM", cd = 1.2 },
-	dive = { key = Enum.KeyCode.E, keyText = "E", label = "DIVE", cd = 2 },
-	catch = { key = Enum.KeyCode.C, keyText = "C", label = "CATCH", cd = 0.6 },
-	jump = { key = Enum.KeyCode.Space, keyText = "SPACE", label = "JUMP", cd = 1 },
-	block = { key = Enum.KeyCode.X, keyText = "X", label = "BLOCK", cd = 1.2 },
+	-- keys: Settings -> CONTROLS (Keybinds)
+	juke = { label = "JUKE", cd = 1.2 },
+	spin = { label = "SPIN", cd = 1.2 },
+	stiff = { label = "STIFF ARM", cd = 1.2 },
+	dive = { label = "DIVE", cd = 2 },
+	catch = { label = "CATCH", cd = 0.6 },
+	jump = { label = "JUMP", cd = 1 },
+	block = { label = "BLOCK", cd = 1.2 },
 }
 
 -- the moves that make sense right now
@@ -654,13 +663,16 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	if processed or not state or state.phase ~= "live" then
 		return
 	end
-	-- QB aiming uses the click; otherwise a click while the ball is in the air is a catch
+	-- a left click while the ball is in the air is a catch too (unless that click is bound to a move)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 and state.playState == "air" then
-		doMove("catch")
-		return
+		local used = Keybinds.UsedBy("MouseButton1", "throw")
+		if used == nil or used == "catch" then
+			doMove("catch")
+			return
+		end
 	end
-	for kind, def in MOVES do
-		if input.KeyCode == def.key then
+	for kind in MOVES do
+		if Keybinds.Is(kind, input) then
 			doMove(kind)
 		end
 	end
@@ -675,6 +687,9 @@ local shownMoves = ""
 local function renderMoves()
 	local list = movesFor(state)
 	local sig = table.concat(list, ",")
+	for _, kind in list do
+		sig ..= Keybinds.Get(kind) -- redraw after a rebind
+	end
 	if sig == shownMoves then
 		return
 	end
@@ -698,8 +713,9 @@ local function renderMoves()
 				new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 14) }),
 				new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }),
 			})
-			local key = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(def.keyText == "SPACE" and 62 or 32, 32), LayoutOrder = 1, ZIndex = 6 }, { UI.corner(7) })
-			UI.text({ Text = def.keyText, FontFace = F.Heavy, TextColor3 = C.BG, TextScaled = false, TextSize = 15, Size = UDim2.fromScale(1, 1), ZIndex = 7 }).Parent = key
+			local keyText = Keybinds.Text(kind)
+			local key = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(math.max(32, #keyText * 9 + 14), 32), LayoutOrder = 1, ZIndex = 6 }, { UI.corner(7) })
+			UI.text({ Text = keyText, FontFace = F.Heavy, TextColor3 = C.BG, TextScaled = false, TextSize = #keyText > 6 and 12 or 15, Size = UDim2.fromScale(1, 1), ZIndex = 7 }).Parent = key
 			key.Parent = row
 			UI.text({ Text = label, FontFace = F.Display, TextScaled = false, TextSize = 20, Size = UDim2.fromOffset(0, 32), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = 2, ZIndex = 6 }).Parent = row
 			row.Activated:Connect(function()
@@ -853,7 +869,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	if processed or not canAim(state) then
 		return
 	end
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+	if Keybinds.Is("throw", input) then
 		throwTo(aimPoint)
 	elseif input.UserInputType == Enum.UserInputType.Touch then
 		-- touch positions don't include the top bar; the camera ray needs viewport pixels

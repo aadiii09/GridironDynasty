@@ -46,7 +46,10 @@ Players who already reached a milestone get the badge the next time they join.
   gets 500 Coins, and so does the inviter (right away, or the next time they join). Each inviter is
   paid for at most 10 friends.
 - **Gear** (top bar): music and sound-effect volume, camera shake, rating callouts and lobby camera
-  motion, saved to the player's account.
+  motion, saved to the player's account. **CONTROLS** (PC) rebinds every game key: click an action,
+  then press any key or mouse button (e.g. CATCH -> left click). Actions used at the same moment
+  can't share a key, so rebinding onto one swaps the two. Defaults: throw = left click, snap = Space,
+  switch = Q, catch = C, jump = Space, juke = Q, spin = R, stiff arm = F, dive = E, block = X.
 
 ## Custom 7v7 (friends)
 PLAY -> **CUSTOM 7v7**: create a game (or join one in this server), pick HOME or AWAY, one offensive
@@ -61,3 +64,14 @@ spot and one defensive spot, and the host presses START. Up to 7 players a team.
 - Code: `CustomService` (lobbies), `MatchService` (stand-in "proxy" units let any player take an NPC's
   spot), `CustomLobbyUI` (the tab and the party pill). In Studio, `Remotes.DevStartCustom` starts a
   test game with a scripted bot ("mate" = on your team, anything else = the other team's QB).
+
+## Practice
+PLAY -> **PRACTICE**: a solo playground on the real field with the AI playing everyone else. No Coins,
+no record, no play clock, and the drive never ends. Switch drills any time from the list on the left:
+- **QB: Passing** - you call the plays and throw.
+- **WR: Catching** - the AI QB throws to you every play.
+- **RB: Running** - every play is a handoff to you (juke, spin, stiff arm, dive).
+- **DB: Coverage** - you're the cornerback on WR1 in man; most throws go at your man.
+- **LB: Tackling** - every play is a run at you.
+Code: `MatchService` (`PRACTICE` drills on top of the custom-game proxies, `StartPractice`, the
+"drill" action), `PracticeUI` (the tab and the in-game drill list).
