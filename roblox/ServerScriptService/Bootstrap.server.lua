@@ -47,6 +47,7 @@ remote("RemoteFunction", "H2HChallenge")
 remote("RemoteFunction", "H2HRespond")
 remote("RemoteFunction", "GetH2HInfo")
 remote("RemoteEvent", "H2HEvent")
+local SetHubSetting = remote("RemoteFunction", "SetHubSetting")
 
 local PackService = require(ServerScriptService.Modules.PackService)
 local LineupService = require(ServerScriptService.Modules.LineupService)
@@ -78,6 +79,8 @@ local function snapshotFor(player)
 		stats = profile.data.stats,
 		jersey = Jerseys.Get(profile.data.jersey).id,
 		difficulty = profile.data.difficulty,
+		hub = profile.data.settings and profile.data.settings.hub or {},
+		h2h = profile.data.h2h,
 		dataVersion = CardDatabase.Version(),
 	}
 end
@@ -147,6 +150,7 @@ QuickSell.OnServerInvoke = function(player, uid)
 end
 
 -- Equip a team jersey (must be unlocked by wins) ---------------------------------------
+local lobbyGear -- defined below (lobby look)
 SetJersey.OnServerInvoke = function(player, id)
 	local profile = PlayerData.Get(player)
 	if type(id) ~= "string" or not profile or not Jerseys.ById[id] then
@@ -159,8 +163,80 @@ SetJersey.OnServerInvoke = function(player, id)
 	PlayerData.Update(player, function(data)
 		data.jersey = id
 	end)
+	task.spawn(lobbyGear, player)
 	return { ok = true, jersey = id }
 end
+
+-- Hub layout preferences (which widgets are open / collapsed / hidden) ------------------
+local HUB_WIDGETS = { featured = true, challenges = true, topcard = true }
+local HUB_STATES = { open = true, collapsed = true, hidden = true }
+SetHubSetting.OnServerInvoke = function(player, key, value)
+	local ok = (HUB_WIDGETS[key] and HUB_STATES[value]) or (key == "clean" and type(value) == "boolean")
+	if type(key) ~= "string" or not ok or not PlayerData.Get(player) then
+		return { ok = false }
+	end
+	PlayerData.Update(player, function(data)
+		data.settings = data.settings or {}
+		data.settings.hub = data.settings.hub or {}
+		data.settings.hub[key] = value
+	end)
+	return { ok = true }
+end
+
+-- Lobby look: you stand on the hub "stage" in your team jersey, helmet and pads -------------
+local Npc = require(ServerScriptService.Modules.Match.Npc)
+local Jerseys = require(ReplicatedStorage.Shared.Jerseys)
+local rngStage = Random.new()
+
+function lobbyGear(player)
+	local profile = PlayerData.Get(player)
+	local char = player.Character
+	if not profile or not char or not char:FindFirstChild("Head") or MatchService.InMatch(player) then
+		return
+	end
+	local jersey = Jerseys.Get(profile.data.jersey)
+	if not Jerseys.IsUnlocked(jersey.id, profile.data.stats.wins) then
+		jersey = Jerseys.Get(Jerseys.Default)
+	end
+	Npc.Unequip(char)
+	Npc.Equip(char, jersey.primary, jersey.secondary, jersey)
+end
+
+local function toStage(player)
+	local char = player.Character
+	if not char or MatchService.InMatch(player) then
+		return
+	end
+	-- a spot near midfield, facing the hub camera (big screen + leaderboard behind you)
+	local spot = Vector3.new(rngStage:NextNumber(-3, 3), 4, rngStage:NextNumber(-2, 2))
+	char:PivotTo(CFrame.lookAt(spot, spot + Vector3.new(0, 0, 1)))
+end
+
+local function onCharacter(player)
+	player.CharacterAdded:Connect(function(char)
+		char:WaitForChild("HumanoidRootPart", 10)
+		task.wait(0.3)
+		toStage(player)
+		PlayerData.WaitFor(player, 30)
+		lobbyGear(player)
+	end)
+	if player.Character then
+		task.spawn(function()
+			PlayerData.WaitFor(player, 30)
+			toStage(player)
+			lobbyGear(player)
+		end)
+	end
+end
+game:GetService("Players").PlayerAdded:Connect(onCharacter)
+for _, p in game:GetService("Players"):GetPlayers() do
+	onCharacter(p)
+end
+MatchService.PlayerExited.Event:Connect(function(player)
+	task.wait(0.2)
+	toStage(player)
+	lobbyGear(player)
+end)
 
 -- Start ---------------------------------------------------------------------------
 CardDatabase.Start()

@@ -92,10 +92,17 @@ end
 
 -- Glass panel background (dark, slight top light, thin stroke)
 function UI.glass(props, children)
-	local f = new("Frame", { BackgroundColor3 = C.Panel, BackgroundTransparency = 0.06, BorderSizePixel = 0 }, {
+	local edge = UI.stroke(Color3.new(1, 1, 1), 1, 0)
+	-- the edge catches light at the top and fades out toward the bottom
+	new("UIGradient", {
+		Rotation = 90,
+		Color = ColorSequence.new(Color3.fromRGB(150, 175, 230), C.Stroke),
+		Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.35), NumberSequenceKeypoint.new(0.5, 0.75), NumberSequenceKeypoint.new(1, 0.55) }),
+	}).Parent = edge
+	local f = new("Frame", { BackgroundColor3 = C.Panel, BackgroundTransparency = 0.04, BorderSizePixel = 0 }, {
 		UI.corner(14),
-		UI.stroke(C.Stroke, 1, 0.1),
-		new("UIGradient", { Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(170, 175, 190)) }),
+		edge,
+		new("UIGradient", { Rotation = 90, Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)), ColorSequenceKeypoint.new(0.35, Color3.fromRGB(205, 210, 225)), ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 155, 172)) }) }),
 	})
 	for k, v in props or {} do
 		f[k] = v
@@ -104,6 +111,25 @@ function UI.glass(props, children)
 		child.Parent = f
 	end
 	return f
+end
+
+-- Soft drop shadow behind a frame (add it to a container BEFORE the panel, lower ZIndex)
+function UI.shadow(props)
+	local sh = new("ImageLabel", {
+		Name = "Shadow",
+		BackgroundTransparency = 1,
+		Image = Assets.shadow or "",
+		ScaleType = Enum.ScaleType.Slice,
+		SliceCenter = Rect.new(40, 40, 88, 88),
+		ImageTransparency = 0.25,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 8),
+		Size = UDim2.new(1, 46, 1, 46),
+	})
+	for k, v in props or {} do
+		sh[k] = v
+	end
+	return sh
 end
 
 local KINDS = {
@@ -115,6 +141,14 @@ local KINDS = {
 	dark = { bg = C.Panel2, bg2 = Color3.fromRGB(16, 20, 32), text = C.Text, stroke = C.Stroke },
 	disabled = { bg = Color3.fromRGB(46, 52, 70), bg2 = Color3.fromRGB(36, 40, 56), text = C.Muted },
 }
+
+function UI.buttonGradient(kind)
+	return ColorSequence.new({
+		ColorSequenceKeypoint.new(0, kind.bg:Lerp(Color3.new(1, 1, 1), 0.22)),
+		ColorSequenceKeypoint.new(0.45, kind.bg),
+		ColorSequenceKeypoint.new(1, kind.bg2),
+	})
+end
 
 -- Button with optional icon, gradient fill, hover lift and press squish.
 function UI.button(opts, onClick)
@@ -131,10 +165,12 @@ function UI.button(opts, onClick)
 		ZIndex = opts.z or 1,
 	}, {
 		UI.corner(opts.radius or 10),
-		new("UIGradient", { Rotation = 90, Color = ColorSequence.new(kind.bg, kind.bg2) }),
+		new("UIGradient", { Rotation = 90, Color = UI.buttonGradient(kind) }),
 	})
 	if kind.stroke then
 		UI.stroke(kind.stroke, 1).Parent = b
+	else
+		UI.stroke(Color3.new(1, 1, 1), 1, 0.72).Parent = b
 	end
 	local scale = new("UIScale", { Scale = 1 })
 	scale.Parent = b
@@ -195,7 +231,7 @@ function UI.setButton(b, textValue, kindName)
 	end
 	if kindName and b:GetAttribute("Kind") ~= kindName then
 		local kind = KINDS[kindName]
-		b:FindFirstChildOfClass("UIGradient").Color = ColorSequence.new(kind.bg, kind.bg2)
+		b:FindFirstChildOfClass("UIGradient").Color = UI.buttonGradient(kind)
 		if label then
 			label.TextColor3 = kind.text
 		end

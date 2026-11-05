@@ -2044,6 +2044,7 @@ local function createMatch(opts)
 			local char = p.Character
 			Npc.SetCollisionGroup(char)
 			local jersey = side == "user" and jerseyA or jerseyB
+			Npc.Unequip(char) -- lobby gear off; game gear (with away colors if needed) on
 			Npc.Equip(char, side == "user" and jerseyA.primary or primaryB, side == "user" and jerseyA.secondary or secondaryB, jersey)
 			matches[p] = m
 			if isPlayer(p) then

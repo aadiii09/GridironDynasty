@@ -383,6 +383,38 @@ def ic_jersey(d, s):
     d.rectangle([s * 0.4, s * 0.72, s * 0.62, s * 0.78], fill=(0, 0, 0, 0))
 
 
+def ic_eye(d, s, slash=False):
+    w = int(s * 0.07)
+    # almond outline
+    d.arc([s * 0.06, s * 0.22, s * 0.94, s * 0.98], 200, 340, fill="white", width=w)
+    d.arc([s * 0.06, s * 0.02, s * 0.94, s * 0.78], 20, 160, fill="white", width=w)
+    d.ellipse([s * 0.36, s * 0.36, s * 0.64, s * 0.64], fill="white")
+    if slash:
+        d.line([(s * 0.14, s * 0.86), (s * 0.86, s * 0.14)], fill=(0, 0, 0, 0), width=int(s * 0.16))
+        d.line([(s * 0.14, s * 0.86), (s * 0.86, s * 0.14)], fill="white", width=w)
+
+
+def ic_eyeoff(d, s):
+    ic_eye(d, s, slash=True)
+
+
+def ic_chevron(d, s):
+    w = int(s * 0.11)
+    d.line([(s * 0.2, s * 0.36), (s * 0.5, s * 0.66), (s * 0.8, s * 0.36)], fill="white", width=w, joint="curve")
+
+
+def shadow_slice():
+    """Soft drop shadow for 9-slice use: 128x128, blurred rounded rect, slice center 40..88."""
+    from PIL import ImageFilter
+    size = 128
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([28, 28, size - 28, size - 28], radius=18, fill=(0, 0, 0, 200))
+    img = img.filter(ImageFilter.GaussianBlur(11))
+    img.save(OUT / "shadow.png")
+    print("  wrote shadow")
+
+
 # ----------------------------------------------------------------------------- team logos
 def star_pts(cx, cy, r1, r2, n=5, rot=-math.pi / 2):
     pts = []
@@ -607,7 +639,8 @@ def main():
     print("Packs"); pack_art(); rays()
     print("Icons")
     for n, f in [("football", ic_football), ("packs", ic_packs), ("lineup", ic_lineup), ("collection", ic_collection),
-                 ("coin", ic_coin), ("trophy", ic_trophy), ("close", ic_close), ("switch", ic_switch), ("whistle", ic_whistle), ("jersey", ic_jersey)]:
+                 ("coin", ic_coin), ("trophy", ic_trophy), ("close", ic_close), ("switch", ic_switch), ("whistle", ic_whistle), ("jersey", ic_jersey),
+                 ("eye", ic_eye), ("eyeoff", ic_eyeoff), ("chevron", ic_chevron)]:
         icon(n, f)
     print("Plays")
     play_diagram("quick", {"WR1": [(0, 3), (-6, 8), (-12, 14)], "WR2": [(0, 6), (7, 6)], "TE": [(0, 2), (-8, 4), (-16, 4)], "RB": [(3, 1), (9, 2)]})

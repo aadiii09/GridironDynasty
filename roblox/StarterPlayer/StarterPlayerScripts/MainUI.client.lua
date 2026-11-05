@@ -85,13 +85,23 @@ end
 local hud = new("Frame", { Name = "HUD", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) })
 hud.Parent = gui
 
--- profile card: headshot, name, record, team rating, VIP badge
-local profile = UI.glass({ Position = UDim2.fromOffset(16, 66), Size = UDim2.fromOffset(320, 84) })
+-- readability: darken the screen edges (and the top/bottom) behind the hub, keep the middle clear
+local NSK = NumberSequenceKeypoint.new
+new("Frame", { Name = "VignetteX", BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0, Size = UDim2.fromScale(1, 1), ZIndex = 0 }, {
+	new("UIGradient", { Transparency = NumberSequence.new({ NSK(0, 0.25), NSK(0.3, 0.92), NSK(0.7, 0.92), NSK(1, 0.3) }) }),
+}).Parent = hud
+new("Frame", { Name = "VignetteY", BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0, Size = UDim2.fromScale(1, 1), ZIndex = 0 }, {
+	new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NSK(0, 0.35), NSK(0.18, 1), NSK(0.7, 1), NSK(1, 0.2) }) }),
+}).Parent = hud
+
+-- profile: headshot in a division-colored ring, name, record and chips
+local profile = UI.glass({ Name = "Profile", Position = UDim2.fromOffset(16, 58), Size = UDim2.fromOffset(350, 78) })
 profile.Parent = hud
 UI.flowGradient(new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, Size = UDim2.new(1, -28, 0, 3), Position = UDim2.fromOffset(14, 0), Parent = profile }, { UI.corner(2) }), C.Accent, C.Blue, C.Purple)
-local headshot = new("ImageLabel", { BackgroundColor3 = C.Panel2, Size = UDim2.fromOffset(62, 62), Position = UDim2.fromOffset(11, 11) }, {
+local headRing = UI.stroke(C.Accent, 3)
+local headshot = new("ImageLabel", { BackgroundColor3 = C.Panel2, Size = UDim2.fromOffset(56, 56), Position = UDim2.fromOffset(12, 11) }, {
 	new("UICorner", { CornerRadius = UDim.new(1, 0) }),
-	UI.stroke(C.Accent, 2),
+	headRing,
 })
 headshot.Parent = profile
 task.spawn(function()
@@ -100,19 +110,23 @@ task.spawn(function()
 		headshot.Image = img
 	end
 end)
-UI.text({ Text = string.upper(player.DisplayName), FontFace = F.Display, TextScaled = false, TextSize = 24, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -96, 0, 28), Position = UDim2.fromOffset(84, 10), TextXAlignment = Enum.TextXAlignment.Left }).Parent = profile
-local recordLabel = UI.text({ Text = "", FontFace = F.Display, TextColor3 = C.Muted, TextScaled = false, TextSize = 15, Size = UDim2.new(0, 120, 0, 22), Position = UDim2.fromOffset(84, 46), TextXAlignment = Enum.TextXAlignment.Left })
+UI.text({ Text = string.upper(player.DisplayName), FontFace = F.Display, TextScaled = false, TextSize = 25, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -170, 0, 28), Position = UDim2.fromOffset(80, 8), TextXAlignment = Enum.TextXAlignment.Left }).Parent = profile
+local recordLabel = UI.text({ Text = "", FontFace = F.Display, TextColor3 = C.Muted, TextScaled = false, TextSize = 16, Size = UDim2.fromOffset(84, 22), Position = UDim2.new(1, -96, 0, 11), TextXAlignment = Enum.TextXAlignment.Right })
 recordLabel.Parent = profile
-local teamChip = UI.chip("TEAM --", C.Accent, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 47), TextColor3 = C.BG })
-teamChip.Parent = profile
-local vipChip = UI.chip("VIP", C.Gold, { Visible = false, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -86, 0, 47), TextColor3 = C.BG })
-vipChip.Parent = profile
+local profileChips = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -92, 0, 22), Position = UDim2.fromOffset(80, 44) }, {
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }),
+})
+profileChips.Parent = profile
+local divisionChip = UI.chip("SILVER", C.Panel2, { LayoutOrder = 1, TextColor3 = C.BG })
+divisionChip.Parent = profileChips
+local teamChip = UI.chip("TEAM --", C.Accent, { LayoutOrder = 2, TextColor3 = C.BG })
+teamChip.Parent = profileChips
+local vipChip = UI.chip("VIP", C.Gold, { Visible = false, LayoutOrder = 3, TextColor3 = C.BG })
+vipChip.Parent = profileChips
 
 -- coins: count-up number + "+" to buy more
-local coinPill = UI.glass({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 66), Size = UDim2.fromOffset(230, 56) })
+local coinPill = UI.glass({ Name = "Coins", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 58), Size = UDim2.fromOffset(230, 56) })
 coinPill.Parent = hud
-coinPill:FindFirstChildOfClass("UIStroke").Color = C.Gold
-coinPill:FindFirstChildOfClass("UIStroke").Transparency = 0.4
 local coinIcon = UI.icon("coin", { Size = UDim2.fromOffset(36, 36), Position = UDim2.fromOffset(12, 10), ImageColor3 = C.Gold })
 coinIcon.Parent = coinPill
 local coinsLabel = UI.text({ Text = "0", FontFace = F.Number, TextColor3 = C.Gold, TextScaled = false, TextSize = 28, Size = UDim2.new(1, -110, 0, 36), Position = UDim2.fromOffset(56, 10), TextXAlignment = Enum.TextXAlignment.Left })
@@ -122,6 +136,13 @@ local addCoins = UI.button({ kind = "gold", text = "+", size = UDim2.fromOffset(
 	openStore("COINS")
 end)
 addCoins.Parent = coinPill
+
+-- eye: hub layout (show / minimize / hide the side cards)
+local openLayoutMenu -- defined with the hub cards
+local eyeButton = UI.button({ name = "LayoutButton", kind = "dark", icon = "eye", iconScale = 0.62, size = UDim2.fromOffset(56, 56), anchor = Vector2.new(1, 0), position = UDim2.new(1, -258, 0, 58), radius = 14, padding = 6 }, function()
+	openLayoutMenu()
+end)
+eyeButton.Parent = hud
 
 local dock = new("Frame", {
 	Name = "Dock",
@@ -135,24 +156,36 @@ local dock = new("Frame", {
 })
 dock.Parent = hud
 
--- colorful gradient tile with a big white icon
+-- dark glass tile with a colored icon badge (the bright PLAY button stays the hero)
 local function tile(iconName, label, color, color2, order, onClick)
-	local t = new("TextButton", { AutoButtonColor = false, Text = "", BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(132, 108), LayoutOrder = order }, {
-		UI.corner(16),
-		UI.stroke(Color3.new(1, 1, 1), 2, 0.75),
-		new("UIGradient", { Rotation = 120, Color = ColorSequence.new(color, color2) }),
+	local t = new("TextButton", { AutoButtonColor = false, Text = "", BackgroundColor3 = C.Panel, BackgroundTransparency = 0.04, Size = UDim2.fromOffset(128, 108), LayoutOrder = order }, {
+		UI.corner(18),
+		new("UIGradient", { Rotation = 90, Color = ColorSequence.new(color:Lerp(C.Panel, 0.6), C.Panel) }),
 	})
-	UI.icon(iconName, { Size = UDim2.fromOffset(50, 50), Position = UDim2.new(0.5, -25, 0, 12), ImageColor3 = Color3.new(1, 1, 1) }).Parent = t
-	UI.text({ Text = label, FontFace = F.Display, TextScaled = false, TextSize = 20, TextStrokeTransparency = 0.6, Size = UDim2.new(1, 0, 0, 24), Position = UDim2.new(0, 0, 1, -34) }).Parent = t
+	local edge = UI.stroke(color, 1.5, 0.45)
+	edge.Parent = t
+	local badge = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(54, 54), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 12) }, {
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }),
+		new("UIGradient", { Rotation = 135, Color = ColorSequence.new(color, color2) }),
+		UI.stroke(Color3.new(1, 1, 1), 1.5, 0.55),
+	})
+	UI.icon(iconName, { Size = UDim2.fromScale(0.58, 0.58), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), ImageColor3 = Color3.new(1, 1, 1) }).Parent = badge
+	badge.Parent = t
+	UI.text({ Text = label, FontFace = F.Display, TextScaled = false, TextSize = 19, Size = UDim2.new(1, 0, 0, 22), Position = UDim2.new(0, 0, 1, -32) }).Parent = t
 	local scale = new("UIScale")
 	scale.Parent = t
 	t.MouseEnter:Connect(function()
 		TweenService:Create(scale, TweenInfo.new(0.12), { Scale = 1.06 }):Play()
+		TweenService:Create(edge, TweenInfo.new(0.12), { Transparency = 0 }):Play()
 	end)
 	t.MouseLeave:Connect(function()
 		TweenService:Create(scale, TweenInfo.new(0.12), { Scale = 1 }):Play()
+		TweenService:Create(edge, TweenInfo.new(0.12), { Transparency = 0.45 }):Play()
 	end)
-	t.Activated:Connect(onClick)
+	t.Activated:Connect(function()
+		UI.clickSound()
+		onClick()
+	end)
 	t.Parent = dock
 	return t
 end
@@ -1169,41 +1202,145 @@ end
 -- =========================================================================================
 -- Hub: featured promo carousel (left) + your top card showcase (right)
 -- =========================================================================================
-local featured = UI.glass({ Name = "Featured", Position = UDim2.fromOffset(16, 162), Size = UDim2.fromOffset(500, 230), ClipsDescendants = true })
-featured.Parent = hud
-table.insert(hubOnly, featured)
+-- =========================================================================================
+-- Hub cards: side columns of collapsible cards (FEATURED + DAILY CHALLENGES | YOUR TOP CARD).
+-- Each card can be open, minimized to its title bar, or hidden; the eye button in the top bar
+-- brings hidden cards back or switches to a clean view. Choices are saved to your account.
+-- =========================================================================================
+local HEADER = 44
+local hubSettings = {}
+local hubCards = {}
+local hubLoaded = false
 
--- the promo can be closed; a small OFFERS button brings it back
-local offersPill = UI.button({ kind = "purple", text = "OFFERS", icon = "packs", size = UDim2.fromOffset(140, 42), position = UDim2.fromOffset(16, 162), textSize = 16 })
-offersPill.Visible = false
-offersPill:SetAttribute("Dismissed", true)
-offersPill.Parent = hud
-table.insert(hubOnly, offersPill)
-local closePromo = UI.button({ kind = "dark", icon = "close", size = UDim2.fromOffset(34, 34), anchor = Vector2.new(1, 0), position = UDim2.new(1, -10, 0, 10), z = 30, padding = 6 }, function()
-	featured:SetAttribute("Dismissed", true)
-	local t = TweenService:Create(featured, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Position = UDim2.fromOffset(-520, 162) })
-	t:Play()
-	t.Completed:Wait()
-	featured.Visible = false
-	featured.Position = UDim2.fromOffset(16, 162)
-	offersPill:SetAttribute("Dismissed", nil)
-	offersPill.Visible = true
-	UI.pop(offersPill, 0.25)
-end)
-closePromo.Parent = featured
-offersPill.Activated:Connect(function()
-	offersPill:SetAttribute("Dismissed", true)
-	offersPill.Visible = false
-	featured:SetAttribute("Dismissed", nil)
-	featured.Visible = true
-	UI.pop(featured, 0.25)
-end)
-local slideHolder = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) })
-slideHolder.Parent = featured
-local dots = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -8), Size = UDim2.fromOffset(120, 10), ZIndex = 20 }, {
+local function saveHub(key, value)
+	hubSettings[key] = value
+	task.spawn(function()
+		pcall(function()
+			Remotes:WaitForChild("SetHubSetting"):InvokeServer(key, value)
+		end)
+	end)
+end
+
+local function column(name, right, width)
+	local col = new("Frame", {
+		Name = name,
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(right and 1 or 0, 0),
+		Position = right and UDim2.new(1, -16, 0, 152) or UDim2.fromOffset(16, 152),
+		Size = UDim2.fromOffset(width, 760),
+	}, {
+		new("UIListLayout", { Padding = UDim.new(0, 16), SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = right and Enum.HorizontalAlignment.Right or Enum.HorizontalAlignment.Left }),
+		new("UIScale", { Name = "Fit" }),
+	})
+	col.Parent = hud
+	table.insert(hubOnly, col)
+	return col
+end
+local leftCol = column("LeftCol", false, 410)
+local rightCol = column("RightCol", true, 256)
+
+local fitHub -- forward
+
+local function smallButton(iconName, xFromRight)
+	local b = new("TextButton", { AutoButtonColor = false, Text = "", BackgroundColor3 = C.Panel2, BackgroundTransparency = 0.2, Size = UDim2.fromOffset(30, 30), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -xFromRight, 0.5, 0), ZIndex = 5 }, {
+		UI.corner(8),
+		UI.stroke(C.Stroke, 1, 0.3),
+	})
+	local ic = UI.icon(iconName, { Name = "Icon", Size = UDim2.fromOffset(16, 16), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), ImageColor3 = C.Muted, ZIndex = 6 })
+	ic.Parent = b
+	b.MouseEnter:Connect(function()
+		TweenService:Create(b, TweenInfo.new(0.12), { BackgroundTransparency = 0 }):Play()
+		ic.ImageColor3 = C.Text
+	end)
+	b.MouseLeave:Connect(function()
+		TweenService:Create(b, TweenInfo.new(0.12), { BackgroundTransparency = 0.2 }):Play()
+		ic.ImageColor3 = C.Muted
+	end)
+	return b, ic
+end
+
+local function hubCard(key, title, iconName, accent, width, contentHeight, parent, order)
+	local card = { key = key, state = "open" }
+	local root = new("Frame", { Name = "Card_" .. key, BackgroundTransparency = 1, Size = UDim2.fromOffset(width, HEADER + contentHeight), LayoutOrder = order })
+	UI.shadow({ ZIndex = 1 }).Parent = root
+	local panel = UI.glass({ Name = "Panel", Size = UDim2.fromScale(1, 1), ClipsDescendants = true, ZIndex = 2 })
+	panel.Parent = root
+	-- a faint wash of the card's color at the top
+	new("Frame", { BackgroundColor3 = accent, BackgroundTransparency = 0.82, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, HEADER), ZIndex = 2 }, {
+		new("UIGradient", { Transparency = NumberSequence.new({ NSK(0, 0.2), NSK(1, 1) }) }),
+	}).Parent = panel
+	local header = new("TextButton", { Name = "Header", AutoButtonColor = false, Text = "", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, HEADER), ZIndex = 3 })
+	header.Parent = panel
+	new("Frame", { BackgroundColor3 = accent, BorderSizePixel = 0, Size = UDim2.fromOffset(4, 22), Position = UDim2.fromOffset(12, 11), ZIndex = 4 }, { UI.corner(2) }).Parent = header
+	UI.icon(iconName, { Size = UDim2.fromOffset(22, 22), Position = UDim2.fromOffset(24, 11), ImageColor3 = accent, ZIndex = 4 }).Parent = header
+	UI.text({ Text = title, FontFace = F.Display, TextScaled = false, TextSize = 19, Size = UDim2.new(1, -130, 1, 0), Position = UDim2.fromOffset(54, 0), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 4 }).Parent = header
+	card.subtitle = UI.text({ Name = "Subtitle", Text = "", FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 11, Size = UDim2.fromOffset(140, 14), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -84, 0.5, 0), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 4 })
+	card.subtitle.Parent = header
+	local minBtn, chevron = smallButton("chevron", 46)
+	minBtn.Name = "Minimize"
+	minBtn.Parent = header
+	local hideBtn = smallButton("close", 10)
+	hideBtn.Name = "Hide"
+	hideBtn.Parent = header
+	new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.9, BorderSizePixel = 0, Size = UDim2.new(1, -24, 0, 1), Position = UDim2.fromOffset(12, HEADER - 1), ZIndex = 3 }).Parent = panel
+	card.content = new("Frame", { Name = "Content", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, contentHeight), Position = UDim2.fromOffset(0, HEADER), ZIndex = 3 })
+	card.content.Parent = panel
+	card.root = root
+	card.height = function()
+		if card.state == "hidden" then
+			return 0
+		end
+		return card.state == "collapsed" and HEADER or HEADER + contentHeight
+	end
+
+	function card.apply(state, animate)
+		card.state = state or "open"
+		local h = card.height()
+		local rot = card.state == "collapsed" and -90 or 0
+		if card.state == "hidden" then
+			root.Visible = false
+		else
+			root.Visible = true
+			if animate then
+				TweenService:Create(root, TweenInfo.new(0.25, Enum.EasingStyle.Quint), { Size = UDim2.fromOffset(width, h) }):Play()
+				TweenService:Create(chevron, TweenInfo.new(0.25, Enum.EasingStyle.Quint), { Rotation = rot }):Play()
+			else
+				root.Size = UDim2.fromOffset(width, h)
+				chevron.Rotation = rot
+			end
+		end
+		if fitHub then
+			task.defer(fitHub)
+		end
+	end
+
+	local function toggle()
+		local s = card.state == "collapsed" and "open" or "collapsed"
+		card.apply(s, true)
+		saveHub(key, s)
+		UI.clickSound()
+	end
+	minBtn.Activated:Connect(toggle)
+	header.Activated:Connect(toggle)
+	hideBtn.Activated:Connect(function()
+		UI.clickSound()
+		card.apply("hidden", true)
+		saveHub(key, "hidden")
+		toast("Hidden - bring it back with the eye button up top", C.Muted)
+	end)
+	root.Parent = parent
+	hubCards[key] = card
+	return card
+end
+
+local featuredCard = hubCard("featured", "FEATURED", "packs", C.Purple, 410, 214, leftCol, 1)
+local featured = featuredCard.root
+local slideHolder = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -16, 1, -10), Position = UDim2.fromOffset(8, 4), ZIndex = 3 }, { UI.corner(12) })
+slideHolder.Parent = featuredCard.content
+local dots = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -12), Size = UDim2.fromOffset(120, 8), ZIndex = 20 }, {
 	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, Padding = UDim.new(0, 6) }),
 })
-dots.Parent = featured
+dots.Parent = featuredCard.content
 
 local function tierOddsText(packId)
 	local o = PackConfig.ById[packId].odds
@@ -1321,21 +1458,21 @@ local function showSlide(i)
 		return x
 	end
 	slideHolder:ClearAllChildren()
-	local bg = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromScale(1, 1), ZIndex = 1 }, { UI.corner(14) })
+	local bg = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromScale(1, 1), ZIndex = 1 }, { UI.corner(12) })
 	UI.flowGradient(bg, s.c1, s.c2, s.c1)
 	bg.Parent = slideHolder
 	-- art on the right
-	local artHolder = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(170, 210), Position = UDim2.new(1, -182, 0, 10), ZIndex = 3 })
+	local artHolder = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(150, 196), Position = UDim2.new(1, -156, 0, 4), ZIndex = 3 })
 	artHolder.Parent = slideHolder
 	if s.art == "pack" then
-		new("ImageLabel", { BackgroundTransparency = 1, Image = Assets.pack, ImageColor3 = s.tint, Size = UDim2.fromOffset(136, 197), Position = UDim2.fromOffset(18, 6), Rotation = 8, ZIndex = 4 }).Parent = artHolder
+		new("ImageLabel", { BackgroundTransparency = 1, Image = Assets.pack, ImageColor3 = s.tint, Size = UDim2.fromOffset(118, 171), Position = UDim2.fromOffset(18, 10), Rotation = 8, ZIndex = 4 }).Parent = artHolder
 	elseif s.art == "standout" then
 		local _, list = latestStandouts()
 		local d = list[1] and CardData.Describe(list[1].id)
 		if d then
 			local face = CardRenderer.Create(d)
-			face.Size = UDim2.fromOffset(120, 180)
-			face.Position = UDim2.fromOffset(16, 34)
+			face.Size = UDim2.fromOffset(112, 168)
+			face.Position = UDim2.fromOffset(18, 14)
 			face.Rotation = 6
 			face.ZIndex = 4
 			face.Parent = artHolder
@@ -1343,25 +1480,25 @@ local function showSlide(i)
 	elseif s.art == "coins" then
 		coinStack(artHolder, 7, 64)
 	else
-		UI.icon("trophy", { Size = UDim2.fromOffset(140, 140), Position = UDim2.fromOffset(15, 30), ImageColor3 = C.Gold, ZIndex = 4 }).Parent = artHolder
+		UI.icon("trophy", { Size = UDim2.fromOffset(118, 118), Position = UDim2.fromOffset(16, 30), ImageColor3 = C.Gold, ZIndex = 4 }).Parent = artHolder
 	end
 	-- copy on the left
-	local copy = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -200, 1, -20), Position = UDim2.fromOffset(18, 14), ZIndex = 5 })
+	local copy = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -168, 1, -16), Position = UDim2.fromOffset(16, 12), ZIndex = 5 })
 	copy.Parent = slideHolder
 	UI.chip(s.kicker, Color3.new(0, 0, 0), { BackgroundTransparency = 0.4, TextColor3 = Color3.new(1, 1, 1), ZIndex = 6 }).Parent = copy
-	UI.text({ Text = val(s.title), FontFace = F.Display, TextScaled = false, TextSize = 40, TextStrokeTransparency = 0.6, Size = UDim2.new(1, 0, 0, 46), Position = UDim2.fromOffset(0, 26), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 }).Parent = copy
-	UI.text({ Text = val(s.sub), FontFace = F.Display, TextColor3 = Color3.fromRGB(235, 240, 250), TextScaled = false, TextSize = 16, Size = UDim2.new(1, 0, 0, 20), Position = UDim2.fromOffset(0, 74), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 }).Parent = copy
-	slideDetail = UI.text({ Text = s.detail(), FontFace = F.Bold, TextColor3 = Color3.fromRGB(220, 225, 235), TextTransparency = 0.15, TextScaled = false, TextSize = 12, TextWrapped = true, Size = UDim2.new(1, 0, 0, 30), Position = UDim2.fromOffset(0, 98), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 })
+	UI.text({ Text = val(s.title), FontFace = F.Display, TextScaled = false, TextSize = 30, TextStrokeTransparency = 0.6, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, 0, 0, 36), Position = UDim2.fromOffset(0, 28), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 }).Parent = copy
+	UI.text({ Text = val(s.sub), FontFace = F.Display, TextColor3 = Color3.fromRGB(235, 240, 250), TextScaled = false, TextSize = 13, TextWrapped = true, Size = UDim2.new(1, 0, 0, 30), Position = UDim2.fromOffset(0, 64), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 }).Parent = copy
+	slideDetail = UI.text({ Text = s.detail(), FontFace = F.Bold, TextColor3 = Color3.fromRGB(220, 225, 235), TextTransparency = 0.15, TextScaled = false, TextSize = 11, TextWrapped = true, Size = UDim2.new(1, 0, 0, 28), Position = UDim2.fromOffset(0, 96), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6 })
 	slideDetail.Parent = copy
 	local label, kind = s.button()
-	slideButton = UI.button({ kind = kind, text = label, size = UDim2.fromOffset(180, 50), position = UDim2.fromOffset(0, 140), textSize = 20, font = label:find("R%$") and F.Number or F.Display, z = 7 }, s.action)
+	slideButton = UI.button({ kind = kind, text = label, size = UDim2.fromOffset(150, 44), position = UDim2.fromOffset(0, 132), textSize = 17, font = label:find("R%$") and F.Number or F.Display, z = 7 }, s.action)
 	slideButton.Parent = copy
 	UI.shine(slideButton, 2.8)
 	-- slide-in motion
-	copy.Position = UDim2.fromOffset(48, 14)
-	TweenService:Create(copy, TweenInfo.new(0.35, Enum.EasingStyle.Quint), { Position = UDim2.fromOffset(18, 14) }):Play()
-	artHolder.Position = UDim2.new(1, -140, 0, 10)
-	TweenService:Create(artHolder, TweenInfo.new(0.45, Enum.EasingStyle.Back), { Position = UDim2.new(1, -182, 0, 10) }):Play()
+	copy.Position = UDim2.fromOffset(46, 12)
+	TweenService:Create(copy, TweenInfo.new(0.35, Enum.EasingStyle.Quint), { Position = UDim2.fromOffset(16, 12) }):Play()
+	artHolder.Position = UDim2.new(1, -120, 0, 4)
+	TweenService:Create(artHolder, TweenInfo.new(0.45, Enum.EasingStyle.Back), { Position = UDim2.new(1, -156, 0, 4) }):Play()
 	-- dots
 	dots:ClearAllChildren()
 	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, Padding = UDim.new(0, 6) }).Parent = dots
@@ -1402,15 +1539,11 @@ task.spawn(function()
 	end)
 end)
 
--- your top card, floating on the right
-local showcase = new("Frame", { Name = "Showcase", BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -40, 0, 150), Size = UDim2.fromOffset(220, 360) })
-showcase.Parent = hud
-table.insert(hubOnly, showcase)
-local showcaseLabel = UI.chip("YOUR TOP CARD", C.Accent, { TextColor3 = C.BG, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.5, 0), ZIndex = 5 })
-showcaseLabel.Parent = showcase
-local showcaseCard = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(210, 315), Position = UDim2.fromOffset(5, 32) })
-showcaseCard.Parent = showcase
-TweenService:Create(showcaseCard, TweenInfo.new(2.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Position = UDim2.fromOffset(5, 20), Rotation = 2 }):Play()
+-- your top card, in the right column
+local topCard = hubCard("topcard", "TOP CARD", "collection", C.Gold, 256, 352, rightCol, 1)
+local showcaseCard = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(216, 324), Position = UDim2.fromOffset(20, 14), ZIndex = 4 })
+showcaseCard.Parent = topCard.content
+TweenService:Create(showcaseCard, TweenInfo.new(2.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Position = UDim2.fromOffset(20, 8), Rotation = 1.5 }):Play()
 local showcaseId = nil
 local function updateShowcase()
 	local best
@@ -1428,6 +1561,7 @@ local function updateShowcase()
 	local face = CardRenderer.Create(CardData.Describe(best.id))
 	face.Size = UDim2.fromScale(1, 1)
 	face.Parent = showcaseCard
+	topCard.subtitle.Text = ("%d %s"):format(best.ovr, best.pos)
 	local hit = new("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1), ZIndex = 30 })
 	hit.Activated:Connect(function()
 		openPanel(collectionPanel)
@@ -1436,20 +1570,179 @@ local function updateShowcase()
 	hit.Parent = face
 end
 
-local function fitHub()
-	local w = gui.AbsoluteSize.X
-	featured.Size = UDim2.fromOffset(math.min(500, w - 32), 230)
-	local cw = hud:FindFirstChild("ChallengeWidget")
-	if cw then
-		-- short screens: collapse to the header row so it never covers the dock
-		local dockTop = gui.AbsoluteSize.Y - 18 - 110 * dock.Fit.Scale
-		local full = cw.Position.Y.Offset + 182 + 12 <= dockTop
-		cw.ClipsDescendants = not full
-		cw.Size = UDim2.fromOffset(math.min(500, w - 32), full and 182 or 46)
+-- which columns are showing: clean view hides both; very narrow screens hide the right one
+local narrowScreen = false
+local function updateColumns()
+	local clean = hubSettings.clean == true
+	leftCol:SetAttribute("Dismissed", clean or nil)
+	rightCol:SetAttribute("Dismissed", (clean or narrowScreen) or nil)
+	for _, col in { leftCol, rightCol } do
+		col.Visible = not col:GetAttribute("Dismissed") and not backdrop.Visible
 	end
-	showcase.Visible = w >= 980 and not backdrop.Visible
+end
+
+-- clean view: hide both columns (top bar + dock stay)
+local function applyClean()
+	local clean = hubSettings.clean == true
+	updateColumns()
+	local ic = eyeButton:FindFirstChild("Icon", true)
+	if ic and ic:IsA("ImageLabel") then
+		ic.Image = clean and Assets.icon_eyeoff or Assets.icon_eye
+	end
+end
+
+-- scale the columns to fit between the top bar and the dock (and narrow screens)
+function fitHub()
+	local w, h = gui.AbsoluteSize.X, gui.AbsoluteSize.Y
+	local dockTop = h - 18 - 110 * dock.Fit.Scale
+	local avail = dockTop - 152 - 14
+	local function need(col)
+		local total = 0
+		for _, card in hubCards do
+			if card.root.Parent == col and card.state ~= "hidden" then
+				total += card.height() + 16
+			end
+		end
+		return total
+	end
+	local scale = math.min(1, avail / math.max(1, need(leftCol)), avail / math.max(1, need(rightCol)), math.max(0.5, (w - 140) / 1180))
+	scale = math.clamp(scale, 0.5, 1)
+	leftCol.Fit.Scale = scale
+	rightCol.Fit.Scale = scale
+	-- very narrow (phones): the right column would sit on top of the left one
+	local narrow = w < 760
+	if narrow ~= narrowScreen then
+		narrowScreen = narrow
+		updateColumns()
+	end
 end
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitHub)
+
+-- the eye menu: SHOW / MIN / HIDE per card, plus a clean view
+local layoutMenu = UI.glass({ Name = "LayoutMenu", Visible = false, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -258, 0, 122), Size = UDim2.fromOffset(330, 262), ZIndex = 90 })
+layoutMenu.Parent = gui
+local function renderLayoutMenu()
+	layoutMenu:ClearAllChildren()
+	UI.corner(14).Parent = layoutMenu
+	UI.stroke(C.Accent, 1.5, 0.3).Parent = layoutMenu
+	UI.text({ Text = "HUB LAYOUT", FontFace = F.Display, TextScaled = false, TextSize = 22, Size = UDim2.new(1, -24, 0, 26), Position = UDim2.fromOffset(14, 10), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 91 }).Parent = layoutMenu
+	local rows = { { "featured", "Featured offers" }, { "challenges", "Daily challenges" }, { "topcard", "Your top card" } }
+	for i, r in rows do
+		local key, label = r[1], r[2]
+		local y = 46 + (i - 1) * 44
+		UI.text({ Text = label, FontFace = F.Bold, TextScaled = false, TextSize = 14, Size = UDim2.fromOffset(130, 32), Position = UDim2.fromOffset(14, y), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 91 }).Parent = layoutMenu
+		for j, opt in { { "open", "SHOW" }, { "collapsed", "MIN" }, { "hidden", "HIDE" } } do
+			local current = (hubCards[key] and hubCards[key].state or "open") == opt[1]
+			UI.button({ kind = current and "primary" or "dark", text = opt[2], size = UDim2.fromOffset(56, 32), position = UDim2.fromOffset(142 + (j - 1) * 60, y), textSize = 12, z = 91 }, function()
+				hubCards[key].apply(opt[1], true)
+				saveHub(key, opt[1])
+				if hubSettings.clean then
+					hubSettings.clean = false
+					saveHub("clean", false)
+					applyClean()
+				end
+				renderLayoutMenu()
+			end).Parent = layoutMenu
+		end
+	end
+	local clean = hubSettings.clean == true
+	UI.button({ kind = clean and "gold" or "dark", icon = clean and "eyeoff" or "eye", text = clean and "CLEAN VIEW: ON" or "CLEAN VIEW: OFF", size = UDim2.new(1, -28, 0, 44), position = UDim2.fromOffset(14, 186), textSize = 16, z = 91 }, function()
+		saveHub("clean", not clean)
+		applyClean()
+		renderLayoutMenu()
+	end).Parent = layoutMenu
+	UI.text({ Text = "Clean view hides both side columns. Saved to your account.", FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 11, Size = UDim2.new(1, -28, 0, 16), Position = UDim2.fromOffset(14, 236), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 91 }).Parent = layoutMenu
+end
+function openLayoutMenu()
+	if layoutMenu.Visible then
+		layoutMenu.Visible = false
+		return
+	end
+	renderLayoutMenu()
+	layoutMenu.Visible = true
+	UI.pop(layoutMenu, 0.2)
+end
+
+-- saved layout, applied once when your data arrives
+local function applyHubSettings(saved)
+	if hubLoaded or not saved then
+		return
+	end
+	hubLoaded = true
+	for key, value in saved do
+		hubSettings[key] = value
+	end
+	for key, card in hubCards do
+		card.apply(hubSettings[key] or "open", false)
+	end
+	applyClean()
+	fitHub()
+	-- entrance: side columns slide in, the dock rises
+	local ease = TweenInfo.new(0.7, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+	leftCol.Position = UDim2.fromOffset(-460, 152)
+	rightCol.Position = UDim2.new(1, 300, 0, 152)
+	dock.Position = UDim2.new(0.5, 0, 1, 160)
+	TweenService:Create(leftCol, ease, { Position = UDim2.fromOffset(16, 152) }):Play()
+	task.delay(0.12, function()
+		TweenService:Create(rightCol, ease, { Position = UDim2.new(1, -16, 0, 152) }):Play()
+	end)
+	task.delay(0.22, function()
+		TweenService:Create(dock, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Position = UDim2.new(0.5, 0, 1, -18) }):Play()
+	end)
+end
+
+-- =========================================================================================
+-- Showroom: in the hub the camera faces your avatar (in your team gear) on a glowing pedestal,
+-- with the stadium screen and leaderboard behind you. Movement is off while you're in menus.
+-- =========================================================================================
+local showroomOn = false
+local pedestal = new("Part", { Name = "Pedestal", Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false, CastShadow = false, Shape = Enum.PartType.Cylinder, Material = Enum.Material.SmoothPlastic, Color = Color3.fromRGB(14, 18, 28), Transparency = 0.25, Size = Vector3.new(0.2, 5.2, 5.2) })
+local pedestalGlow = new("Part", { Name = "PedestalGlow", Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false, CastShadow = false, Shape = Enum.PartType.Cylinder, Material = Enum.Material.Neon, Color = C.Accent, Transparency = 0.35, Size = Vector3.new(0.12, 5.8, 5.8) })
+local camBlend = 0
+
+RunService.RenderStepped:Connect(function(dt)
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local cam = workspace.CurrentCamera
+	local hubOn = gui.Enabled and root ~= nil and hum ~= nil
+	if hubOn then
+		if not showroomOn then
+			showroomOn = true
+			camBlend = 0
+			-- face the camera
+			root.CFrame = CFrame.lookAt(root.Position, root.Position + Vector3.new(0, 0, 1))
+		end
+		-- stand still on the stage while you're in menus
+		hum.WalkSpeed = 0
+		hum.JumpHeight = 0
+		cam.CameraType = Enum.CameraType.Scriptable
+		local t = os.clock()
+		local base = root.Position
+		local camPos = base + Vector3.new(math.sin(t * 0.21) * 3, 2 + math.sin(t * 0.13) * 0.4, 19)
+		local target = CFrame.lookAt(camPos, base + Vector3.new(0, 0.6, 0))
+		camBlend = math.min(1, camBlend + dt)
+		cam.CFrame = camBlend < 0.05 and target or cam.CFrame:Lerp(target, 1 - math.exp(-dt * 4))
+		cam.FieldOfView = 44
+		local ground = root.Position.Y - hum.HipHeight - root.Size.Y / 2
+		pedestal.CFrame = CFrame.new(root.Position.X, ground + 0.09, root.Position.Z) * CFrame.Angles(0, 0, math.rad(90))
+		pedestalGlow.CFrame = CFrame.new(root.Position.X, ground + 0.05, root.Position.Z) * CFrame.Angles(0, 0, math.rad(90))
+		pedestalGlow.Transparency = 0.3 + 0.15 * math.sin(t * 2.2)
+		if not pedestal.Parent then
+			pedestal.Parent = workspace
+			pedestalGlow.Parent = workspace
+		end
+	elseif showroomOn then
+		-- a game started (its camera takes over) or the character is gone
+		showroomOn = false
+		if hum then
+			hum.WalkSpeed = 16 -- the game sets each player's real speed
+			hum.JumpHeight = 7.2
+		end
+		pedestal.Parent = nil
+		pedestalGlow.Parent = nil
+	end
+end)
 
 -- =========================================================================================
 -- Daily reward + purchase celebrations
@@ -1545,39 +1838,28 @@ local function rewardChip(reward, z)
 	return UI.chip(isPack and (string.upper(reward.pack) .. " PACK") or ("+" .. UI.commas(reward.coins)), isPack and C.Purple or C.Gold, { TextColor3 = isPack and C.Text or C.BG, ZIndex = z })
 end
 
--- hub widget: today's three challenges under the promo carousel
-local challengeWidget = UI.glass({ Name = "ChallengeWidget", Position = UDim2.fromOffset(16, 404), Size = UDim2.fromOffset(500, 182) })
-challengeWidget.Parent = hud
-table.insert(hubOnly, challengeWidget)
-local function placeWidget()
-	challengeWidget.Position = UDim2.fromOffset(16, featured:GetAttribute("Dismissed") and 214 or 404)
-	fitHub()
-end
-featured:GetAttributeChangedSignal("Dismissed"):Connect(placeWidget)
+-- hub card: today's three challenges
+local challengesCard = hubCard("challenges", "DAILY CHALLENGES", "trophy", C.Accent, 410, 188, leftCol, 2)
+local challengeWidget = challengesCard.content
 
 local function renderWidget()
 	challengeWidget:ClearAllChildren()
-	UI.corner(14).Parent = challengeWidget
-	UI.stroke(C.Stroke, 1).Parent = challengeWidget
 	local snap = challengeState
-	UI.text({ Text = "DAILY CHALLENGES", FontFace = F.Display, TextScaled = false, TextSize = 22, Size = UDim2.fromOffset(220, 26), Position = UDim2.fromOffset(16, 10), TextXAlignment = Enum.TextXAlignment.Left }).Parent = challengeWidget
-	local timer = UI.text({ Name = "Timer", Text = "", FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 12, Size = UDim2.fromOffset(140, 16), Position = UDim2.fromOffset(196, 16), TextXAlignment = Enum.TextXAlignment.Left })
-	timer.Parent = challengeWidget
-	UI.button({ kind = "dark", text = "ALL", size = UDim2.fromOffset(64, 30), position = UDim2.new(1, -150, 0, 8), textSize = 13 }, function()
+	UI.button({ kind = "dark", text = "ALL CHALLENGES", size = UDim2.new(0.5, -18, 0, 34), position = UDim2.new(0, 12, 1, -44), textSize = 13, z = 4 }, function()
 		openPanel(challengesPanel)
 		renderChallenges()
 	end).Parent = challengeWidget
-	UI.button({ kind = "gold", icon = "trophy", text = "RANKS", size = UDim2.fromOffset(78, 30), position = UDim2.new(1, -82, 0, 8), textSize = 13 }, function()
+	UI.button({ kind = "gold", icon = "trophy", text = "LEADERBOARDS", size = UDim2.new(0.5, -18, 0, 34), position = UDim2.new(0.5, 6, 1, -44), textSize = 13, z = 4 }, function()
 		openPanel(leaderboardPanel)
 		renderLeaderboard()
 	end).Parent = challengeWidget
 	if not snap then
 		return
 	end
-	timer.Text = "RESETS IN " .. fmtDuration(math.max(0, snap.daily.endsAt - os.time()))
+	challengesCard.subtitle.Text = "RESETS IN " .. fmtDuration(math.max(0, snap.daily.endsAt - os.time()))
 	for i, ch in snap.daily.list do
-		local y = 46 + (i - 1) * 43
-		local row = new("Frame", { BackgroundColor3 = C.Panel2, BackgroundTransparency = ch.claimed and 0.6 or 0.2, Size = UDim2.new(1, -24, 0, 38), Position = UDim2.fromOffset(12, y) }, { UI.corner(8) })
+		local y = 8 + (i - 1) * 44
+		local row = new("Frame", { BackgroundColor3 = C.Panel2, BackgroundTransparency = ch.claimed and 0.6 or 0.25, Size = UDim2.new(1, -24, 0, 38), Position = UDim2.fromOffset(12, y), ZIndex = 4 }, { UI.corner(8) })
 		UI.text({ Text = ch.text, FontFace = F.Bold, TextColor3 = ch.claimed and C.Muted or C.Text, TextScaled = false, TextSize = 14, Size = UDim2.new(1, -190, 0, 18), Position = UDim2.fromOffset(10, 4), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd }).Parent = row
 		local track = new("Frame", { BackgroundColor3 = C.BG, Size = UDim2.new(1, -190, 0, 5), Position = UDim2.fromOffset(10, 26) }, { UI.corner(3) })
 		new("Frame", { BackgroundColor3 = ch.complete and C.Accent or C.Blue, Size = UDim2.fromScale(math.max(0.02, ch.progress / ch.target), 1) }, { UI.corner(3) }).Parent = track
@@ -1691,10 +1973,7 @@ task.spawn(function()
 	while true do -- keep the reset timers ticking
 		task.wait(30)
 		if challengeState then
-			local t = challengeWidget:FindFirstChild("Timer")
-			if t then
-				t.Text = "RESETS IN " .. fmtDuration(math.max(0, challengeState.daily.endsAt - os.time()))
-			end
+			challengesCard.subtitle.Text = "RESETS IN " .. fmtDuration(math.max(0, challengeState.daily.endsAt - os.time()))
 			if challengeState.daily.endsAt <= os.time() then
 				applyChallenges(Remotes.GetChallenges:InvokeServer()) -- new day
 			end
@@ -1702,7 +1981,6 @@ task.spawn(function()
 	end
 end)
 renderWidget()
-placeWidget()
 
 -- leaderboard panel
 local leaderboardTab = "week"
@@ -2248,6 +2526,12 @@ local function applyInventory(inv)
 	state.stats = inv.stats or {}
 	state.jersey = inv.jersey or state.jersey
 	state.difficulty = inv.difficulty or state.difficulty
+	applyHubSettings(inv.hub)
+	local rating = inv.h2h and inv.h2h.rating or RankConfig.StartRating
+	local div = RankConfig.Division(rating)
+	divisionChip.Text = div.name
+	divisionChip.BackgroundColor3 = div.color
+	headRing.Color = div.color
 	local open = 0
 	for _, j in Jerseys.List do
 		open += Jerseys.IsUnlocked(j.id, state.stats.wins) and 1 or 0
