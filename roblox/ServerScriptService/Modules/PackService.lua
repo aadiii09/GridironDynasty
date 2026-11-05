@@ -146,10 +146,10 @@ local function freePackReadyAt(player)
 	return profile.data.lastFreePack + PackConfig.FreePackCooldown
 end
 
--- Free + Coin packs (RemoteFunction OpenPack)
+-- Free + Coin packs, and Robux packs bought with Coins (RemoteFunction OpenPack)
 local function onOpenPack(player, packId)
 	local pack = PackConfig.ById[packId]
-	if type(packId) ~= "string" or not pack or pack.currency == "Robux" then
+	if type(packId) ~= "string" or not pack or (pack.currency == "Robux" and not pack.coinPrice) then
 		return { ok = false, err = "That pack can't be opened this way." }
 	end
 	if not CardDatabase.IsReady() or not PlayerData.Get(player) then
@@ -167,13 +167,14 @@ local function onOpenPack(player, packId)
 		PlayerData.Update(player, function(data)
 			data.lastFreePack = os.time()
 		end)
-	elseif pack.currency == "Coins" then
-		if not PlayerData.SpendCoins(player, pack.price) then
+	else
+		local cost = PackConfig.CoinPrice(pack)
+		if not cost or not PlayerData.SpendCoins(player, cost) then
 			return { ok = false, err = "Not enough Coins." }
 		end
 	end
 
-	local result = grant(player, pack, pack.currency)
+	local result = grant(player, pack, pack.currency == "Free" and "Free" or "Coins")
 	task.spawn(PlayerData.SaveNow, player)
 	result.ok = true
 	return result

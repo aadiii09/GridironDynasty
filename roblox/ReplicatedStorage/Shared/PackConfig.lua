@@ -4,6 +4,8 @@
 --
 -- Robux packs need a Developer Product each (Creator Hub > Monetization > Developer Products).
 -- Put each product's ID in productId. A Robux pack with productId 0 is shown as "Coming soon".
+-- coinPrice: a Robux pack can also be bought with Coins (priced so Robux stays the better deal,
+-- about 400 Coins a win: Pro ~15 wins, Elite ~38, Dynasty ~100).
 
 local PackConfig = {}
 
@@ -36,6 +38,7 @@ PackConfig.Packs = {
 		blurb = "5 cards, 1 Rare or better",
 		currency = "Robux",
 		price = 49,
+		coinPrice = 6000,
 		productId = 3728099990,
 		cards = 5,
 		odds = { Common = 60, Rare = 30, Epic = 8, Elite = 1.7, Icon = 0.3 },
@@ -48,6 +51,7 @@ PackConfig.Packs = {
 		blurb = "8 cards, 1 Epic or better",
 		currency = "Robux",
 		price = 149,
+		coinPrice = 15000,
 		productId = 3728100025,
 		cards = 8,
 		odds = { Common = 45, Rare = 37, Epic = 14, Elite = 3.5, Icon = 0.5 },
@@ -60,6 +64,7 @@ PackConfig.Packs = {
 		blurb = "10 cards, 1 Elite or better",
 		currency = "Robux",
 		price = 399,
+		coinPrice = 40000,
 		productId = 3728100054,
 		cards = 10,
 		odds = { Common = 30, Rare = 40, Epic = 22, Elite = 6.5, Icon = 1.5 },
@@ -75,6 +80,14 @@ for _, pack in PackConfig.Packs do
 	if pack.productId and pack.productId ~= 0 then
 		PackConfig.ByProductId[pack.productId] = pack
 	end
+end
+
+-- What this pack costs in Coins (nil = can't be bought with Coins)
+function PackConfig.CoinPrice(pack)
+	if pack.currency == "Coins" then
+		return pack.price
+	end
+	return pack.coinPrice
 end
 
 function PackConfig.IsPaidRandom(pack)

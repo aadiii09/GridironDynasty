@@ -26,7 +26,7 @@
 
 ### Paid random items policy
 
-Because Coins can be bought with Robux, the Coin-priced Starter Pack counts as a paid random item, the same as the Robux packs. Every pack shows exact odds before purchase. Players whose PolicyService says `ArePaidRandomItemsRestricted` can't buy Robux packs **or** Coin bundles, so any Coins they have were earned in-game and their Coin packs stay allowed.
+Because Coins can be bought with Robux, the Coin-priced Starter Pack counts as a paid random item, the same as the Robux packs. Every pack shows exact odds before purchase. Players whose PolicyService says `ArePaidRandomItemsRestricted` can't buy Robux packs **or** Coin bundles, so any Coins they have were earned in-game and their Coin packs stay allowed. Pro, Elite and Dynasty can also be bought with Coins (about 15 / 38 / 100 wins of Coins, so Robux stays the better deal), and that Coin option stays open to restricted players for the same reason.
 
 ## Card tiers (by OVR)
 
@@ -52,9 +52,9 @@ Every card's rating is locked when the card is released. Real performance shows 
 |---|---|---|---|---|---|---|---|---|
 | Daily Free | Free, every 22h | 3 | none | 80% | 17% | 2.7% | 0.3% | 0% |
 | Starter | 2,500 Coins | 5 | none | 70% | 24% | 5% | 0.9% | 0.1% |
-| Pro | 49 R$ | 5 | 1 Rare+ | 60% | 30% | 8% | 1.7% | 0.3% |
-| Elite | 149 R$ | 8 | 1 Epic+ | 45% | 37% | 14% | 3.5% | 0.5% |
-| Dynasty | 399 R$ | 10 | 1 Elite+ | 30% | 40% | 22% | 6.5% | 1.5% |
+| Pro | 49 R$ or 6,000 Coins | 5 | 1 Rare+ | 60% | 30% | 8% | 1.7% | 0.3% |
+| Elite | 149 R$ or 15,000 Coins | 8 | 1 Epic+ | 45% | 37% | 14% | 3.5% | 0.5% |
+| Dynasty | 399 R$ or 40,000 Coins | 10 | 1 Elite+ | 30% | 40% | 22% | 6.5% | 1.5% |
 
 Odds shown are per card slot, and each row sums to 100%. The last card of Pro/Elite/Dynasty packs uses the guaranteed-slot table instead:
 

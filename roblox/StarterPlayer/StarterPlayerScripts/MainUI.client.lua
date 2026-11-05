@@ -458,8 +458,8 @@ local function priceText(pack, info)
 	return "R$ " .. pack.price, true
 end
 
-local function buyPack(pack)
-	if pack.currency == "Robux" then
+local function buyPack(pack, withCoins)
+	if pack.currency == "Robux" and not withCoins then
 		local res = Remotes.PromptPack:InvokeServer(pack.id)
 		if not res.ok then
 			toast(res.err, C.Red)
@@ -520,11 +520,23 @@ local function renderPacks(body)
 		UI.text({ Text = pack.blurb, FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 13, Size = UDim2.new(1, -16, 0, 18), Position = UDim2.fromOffset(8, 244), ZIndex = 13 }).Parent = tileFrame
 		local label, ready = priceText(pack, info)
 		local kind = not ready and "disabled" or pack.currency == "Coins" and "gold" or pack.currency == "Robux" and "blue" or "primary"
-		local buy = UI.button({ kind = kind, text = label, icon = pack.currency == "Coins" and "coin" or nil, size = UDim2.new(1, -24, 0, 48), position = UDim2.fromOffset(12, 268), textSize = 18, font = F.Number, z = 13 }, function()
+		-- Robux packs can be bought with Coins too: Robux and Coin buttons side by side
+		local split = pack.coinPrice ~= nil
+		local buy = UI.button({ kind = kind, text = label, icon = pack.currency == "Coins" and "coin" or nil, size = split and UDim2.new(0.5, -16, 0, 48) or UDim2.new(1, -24, 0, 48), position = UDim2.fromOffset(12, 268), textSize = split and 15 or 18, font = F.Number, z = 13 }, function()
 			buyPack(pack)
 		end)
 		packButtons[pack.id] = buy
 		buy.Parent = tileFrame
+		if split then
+			local affordable = state.coins >= pack.coinPrice
+			UI.button({ name = "BuyCoins", kind = affordable and "gold" or "disabled", text = UI.commas(pack.coinPrice), icon = "coin", size = UDim2.new(0.5, -16, 0, 48), anchor = Vector2.new(1, 0), position = UDim2.new(1, -12, 0, 268), textSize = 15, font = F.Number, z = 13 }, function()
+				if state.coins < pack.coinPrice then
+					toast(("You need %s Coins for the %s."):format(UI.commas(pack.coinPrice), pack.name), C.Red)
+					return
+				end
+				buyPack(pack, true)
+			end).Parent = tileFrame
+		end
 		UI.button({ kind = "dark", text = "VIEW ODDS", size = UDim2.new(1, -24, 0, 34), position = UDim2.fromOffset(12, 326), textSize = 13, z = 13 }, function()
 			openOdds(pack)
 		end).Parent = tileFrame
@@ -2640,7 +2652,7 @@ local function jerseyFigure(j)
 end
 
 local function fxLabel(j)
-	return ({ shine = "SHINE", pulse = "GLOW", lava = "ANIMATED", galaxy = "ANIMATED", rainbow = "ANIMATED" })[j.fx]
+	return ({ shine = "SHINE", pulse = "GLOW" })[j.fx] or (j.fx and "ANIMATED")
 end
 
 function renderLocker()

@@ -36,7 +36,7 @@ never leaves it. Log: `private/logs/weekly_update.log`.
 
 ## Badges
 Badge milestones live in `roblox/ReplicatedStorage/Shared/BadgeConfig.lua` (first game, first win,
-10/50 wins, Elite/Icon pulls, an interception, Gold/Dynasty ranked divisions, the Rainbow jersey).
+10/50 wins, Elite/Icon pulls, an interception, Gold/Dynasty ranked divisions, the Rainbow jersey). Jerseys unlock from 0 to 5,000 wins (37 in all, see `Shared/Jerseys.lua`).
 Each starts with `id = 0` (skipped). To turn one on: Creator Hub -> your experience -> Engagement ->
 Badges -> Create, upload `art/out/badge_<key>.png`, then paste the new badge ID into its `id`.
 Players who already reached a milestone get the badge the next time they join.
