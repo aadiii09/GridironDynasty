@@ -3,16 +3,20 @@
 
 local MatchConfig = {}
 
-MatchConfig.Yard = 3 -- studs per yard
-MatchConfig.FieldYards = 60 -- goal line to goal line
-MatchConfig.EndZoneYards = 8
-MatchConfig.WidthYards = 36
-MatchConfig.DrivesPerTeam = 4
-MatchConfig.StartYard = 15 -- every drive starts at your own 15
+MatchConfig.Yard = 3 -- studs per yard (a player is about 2 yards tall, so this is to scale)
+MatchConfig.FieldYards = 100 -- goal line to goal line: a full-size field
+MatchConfig.EndZoneYards = 10
+MatchConfig.WidthYards = 53
+MatchConfig.DrivesPerTeam = 3
+MatchConfig.StartYard = 25 -- every drive starts at your own 25
 MatchConfig.FirstDownYards = 10
 MatchConfig.TouchdownPoints = 7 -- extra point included
 MatchConfig.SafetyPoints = 2
-MatchConfig.MaxPlaySeconds = 20
+MatchConfig.MaxPlaySeconds = 25
+MatchConfig.ResultPause = 1.8 -- seconds between the whistle and lining up again
+
+-- The hub lobby's stadium keeps its smaller size (the hub camera is framed for it)
+MatchConfig.LobbyField = { FieldYards = 60, EndZoneYards = 8, WidthYards = 36 }
 
 MatchConfig.Rewards = { Win = 400, Tie = 250, Loss = 150 }
 

@@ -47,10 +47,11 @@ function World.SetupLighting()
 end
 
 function World.BuildLobby()
-	local L = MatchConfig.FieldLength()
+	local L = MatchConfig.LobbyField.FieldYards * MatchConfig.Yard
 	local origin = Vector3.new(0, 0, L / 2) -- midfield at the world origin
 	local lobby = Field.new(Color3.fromRGB(16, 120, 80), Color3.fromRGB(16, 120, 80), {
 		origin = origin,
+		dims = MatchConfig.LobbyField,
 		name = "LobbyStadium",
 		homeName = "GRIDIRON",
 		awayName = "DYNASTY",

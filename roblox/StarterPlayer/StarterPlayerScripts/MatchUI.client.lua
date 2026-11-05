@@ -1,6 +1,7 @@
 -- Match HUD: broadcast score bug, play/defense call cards with diagrams, snap/throw/switch
 -- controls, result banners and the final screen.
--- Keyboard: 1-3 call, Space snap/ready, 1-4 throw, Q switch defender.
+-- Keyboard: 1-3 call, Space snap/ready, Q switch defender. QB: aim with the mouse and click to
+-- throw (phones: tap the field where you want the ball).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8,6 +9,7 @@ local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 local UserInputService = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
 
 local MatchConfig = require(ReplicatedStorage.Shared.MatchConfig)
 local Assets = require(ReplicatedStorage.Shared.Assets)
@@ -156,7 +158,9 @@ local function coachTip(s)
 	elseif s.phase == "presnap" and userBall then
 		return TOUCH and "Tap SNAP to start the play." or "Press SPACE (or click SNAP) to start the play."
 	elseif s.phase == "live" and userBall and s.playState == "dropback" then
-		return TOUCH and "Throw it! Tap a receiver. GREEN means he's open." or "Throw it! Press a receiver's number (1-4). GREEN rings are open."
+		return TOUCH and "Throw it! Tap the field next to an open receiver (GREEN ring)." or "Throw it! Aim at an open receiver (GREEN ring) with the mouse and CLICK."
+	elseif s.phase == "live" and userBall and s.playState == "air" then
+		return "You're the receiver now - run to the GOLD CIRCLE to catch it!"
 	elseif s.phase == "live" and userBall and s.playState == "carry" then
 		return TOUCH and "RUN! Use the joystick to reach the end zone." or "RUN! Use WASD to reach the end zone."
 	elseif s.phase == "defcall" then
@@ -413,13 +417,13 @@ local function render()
 			-- custom game captain (the AI plays QB): you snap it, the QB throws
 			hint.Text = ("You're the %s  -  snap it when you're set, the QB %s"):format(s.control and s.control.pos or "", s.play == "run" and "hands it off" or "throws it")
 		else
-			hint.Text = s.play == "run" and "Snap it and take the handoff" or (TOUCH and "Snap it, then tap a receiver to throw" or "Snap it, then throw to a yellow ring (1-4)")
+			hint.Text = s.play == "run" and "Snap it and take the handoff" or (TOUCH and "Snap it, then tap the field to throw" or "Snap it, then aim with the mouse and click to throw")
 		end
 		UI.button({ kind = "primary", icon = "football", text = TOUCH and "SNAP" or "SNAP  [SPACE]", size = UDim2.fromOffset(TOUCH and 220 or 250, 64), textSize = 18 }, function()
 			MatchAction:FireServer("snap")
 		end).Parent = actionHolder()
-	elseif s.phase == "live" and not s.youCarry and s.mode == "custom" and not (s.canThrow and s.playState == "dropback") then
-		-- custom games: you're not the one with the ball
+	elseif s.phase == "live" and not s.youCarry and not (s.canThrow and s.playState == "dropback") then
+		-- you're not the one with the ball (or it's in the air coming to you)
 		if s.playState == "air" then
 			hint.Text = "BALL IN THE AIR  -  if it's coming to you, get to the GOLD CIRCLE!"
 		elseif s.playState == "carry" then
@@ -428,23 +432,9 @@ local function render()
 			hint.Text = "GET OPEN  -  your QB can throw to you (or block)"
 		end
 	elseif s.phase == "live" and s.playState == "dropback" and s.play ~= "run" and s.canThrow then
-		hint.Text = TOUCH and "THROW  -  tap a receiver  -  GREEN = open, RED = covered" or "THROW  (1-4)  -  GREEN = open, RED = covered  -  or run past the line to scramble"
+		hint.Text = TOUCH and "THROW  -  tap the field where you want the ball  -  GREEN rings = open"
+			or "THROW  -  aim with the mouse and CLICK  -  GREEN rings = open  -  or run past the line to scramble"
 		table.clear(openChips)
-		for _, t in s.targets do
-			if t.available then
-				local b = UI.button({ kind = "gold", text = ("%s %s"):format(t.pos, t.name), size = UDim2.fromOffset(210, 66), order = t.key, textSize = 15 }, function()
-					MatchAction:FireServer("throw", t.key)
-				end)
-				UI.chip(tostring(t.key), C.BG, { TextColor3 = C.Gold, Position = UDim2.fromOffset(-6, -8), ZIndex = 3 }).Parent = b
-				UI.text({ Text = ("%d OVR  -  SPD %d  -  CTH %d"):format(t.ovr or 0, t.spd or 0, t.cth or 0), FontFace = F.Bold, TextColor3 = C.BG, TextTransparency = 0.15, TextScaled = false, TextSize = 11, Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 1, -16), ZIndex = 3 }).Parent = b
-				local chip = UI.chip("...", C.BG, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 6, 0, -8), ZIndex = 3 })
-				chip.Parent = b
-				if t.model then
-					openChips[t.model] = chip
-				end
-				b.Parent = actionHolder()
-			end
-		end
 	elseif s.phase == "live" and s.playState == "carry" then
 		hint.Text = "RUN!  Find a hole and reach the end zone"
 	end
@@ -472,6 +462,14 @@ end
 Remotes:WaitForChild("MatchState").OnClientEvent:Connect(function(s)
 	if s.event == "callout" then
 		showCallout(s.model, s.text, s.color)
+		return
+	end
+	if s.event == "takeover" then
+		-- you just took over a receiver / the RB: keep his momentum (the camera glides over)
+		local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if root and typeof(s.velocity) == "Vector3" then
+			root.AssemblyLinearVelocity = s.velocity
+		end
 		return
 	end
 	if s.event == "fall" then
@@ -536,8 +534,132 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		MatchAction:FireServer("call", MatchConfig.Plays[n].id)
 	elseif state.phase == "presnap" and input.KeyCode == Enum.KeyCode.Space and state.canSnap then
 		MatchAction:FireServer("snap")
-	elseif state.phase == "live" and n and state.canThrow then
-		MatchAction:FireServer("throw", n)
+	end
+end)
+
+-- Your speed: the server sends top speed / build-up / slowdowns as attributes on your character;
+-- set WalkSpeed from them every frame (smooth, no network traffic per frame)
+RunService.RenderStepped:Connect(function()
+	local char = player.Character
+	local top = char and char:GetAttribute("GDSpeed")
+	if not top then
+		return
+	end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		if top <= 0 then
+			hum.WalkSpeed = 0
+		else
+			local at = char:GetAttribute("GDAccelAt") or 0
+			hum.WalkSpeed = top * MatchConfig.Ramp(char:GetAttribute("GDRamp") or 0.6, workspace:GetServerTimeNow() - at) * (char:GetAttribute("GDMul") or 1)
+		end
+	end
+end)
+
+-- Aimed throws ------------------------------------------------------------------------------------
+-- QB in the pocket: a reticle on the field follows the mouse; click to throw there. Phones: tap the
+-- field. Throws are clamped to the QB's arm (throwReach); his ratings decide how close it lands.
+local function makeDisc(size, color, transparency)
+	local p = Instance.new("Part")
+	p.Name = "AimReticle"
+	p.Shape = Enum.PartType.Cylinder
+	p.Size = Vector3.new(0.12, size, size)
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.Material = Enum.Material.Neon
+	p.Color = color
+	p.Transparency = transparency
+	return p
+end
+local aimOuter = makeDisc(7, C.Gold, 0.35)
+local aimInner = makeDisc(2.2, Color3.new(1, 1, 1), 0.1)
+local aimPoint = nil
+local thrownAt = 0
+
+local function canAim(s)
+	return s ~= nil and s.phase == "live" and s.playState == "dropback" and s.canThrow == true and s.play ~= "run"
+end
+
+-- the point on the field under a screen position (viewport pixels), clamped to the QB's reach
+local function fieldPoint(viewportPos)
+	local s = state
+	if not s or not s.losWorld then
+		return nil
+	end
+	local ray = workspace.CurrentCamera:ViewportPointToRay(viewportPos.X, viewportPos.Y)
+	if ray.Direction.Y > -0.02 then
+		return nil
+	end
+	local groundY = s.losWorld.Y
+	local p = ray.Origin + ray.Direction * ((groundY - ray.Origin.Y) / ray.Direction.Y)
+	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if root and s.throwReach then
+		local off = Vector3.new(p.X - root.Position.X, 0, p.Z - root.Position.Z)
+		if off.Magnitude > s.throwReach then
+			local q = Vector3.new(root.Position.X, 0, root.Position.Z) + off.Unit * s.throwReach
+			p = Vector3.new(q.X, groundY, q.Z)
+		end
+	end
+	return p
+end
+
+local function throwTo(p)
+	if not p or os.clock() - thrownAt < 0.6 then
+		return
+	end
+	thrownAt = os.clock()
+	MatchAction:FireServer("throwAt", p)
+end
+
+RunService.RenderStepped:Connect(function()
+	local s = state
+	if not canAim(s) then
+		aimOuter.Parent = nil
+		aimInner.Parent = nil
+		aimPoint = nil
+		MatchCamera.AimPoint = nil
+		return
+	end
+	if not TOUCH then
+		aimPoint = fieldPoint(UserInputService:GetMouseLocation())
+	end
+	MatchCamera.AimPoint = aimPoint
+	if not aimPoint then
+		aimOuter.Parent = nil
+		aimInner.Parent = nil
+		return
+	end
+	-- green when a receiver is right there
+	local near = false
+	for _, t in s.targets or {} do
+		local root = t.available and t.model and t.model:FindFirstChild("HumanoidRootPart")
+		if root and (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(aimPoint.X, 0, aimPoint.Z)).Magnitude < 6 then
+			near = true
+		end
+	end
+	aimOuter.Color = near and C.Accent or C.Gold
+	local flatCF = CFrame.new(aimPoint + Vector3.new(0, 0.12, 0)) * CFrame.Angles(0, 0, math.rad(90))
+	aimOuter.CFrame = flatCF
+	aimInner.CFrame = flatCF + Vector3.new(0, 0.02, 0)
+	aimOuter.Parent = workspace.CurrentCamera
+	aimInner.Parent = workspace.CurrentCamera
+end)
+
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed or not canAim(state) then
+		return
+	end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		throwTo(aimPoint)
+	elseif input.UserInputType == Enum.UserInputType.Touch then
+		-- touch positions don't include the top bar; the camera ray needs viewport pixels
+		local inset = GuiService:GetGuiInset()
+		local p = fieldPoint(Vector2.new(input.Position.X, input.Position.Y + inset.Y))
+		aimPoint = p
+		throwTo(p)
 	end
 end)
 

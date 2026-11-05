@@ -416,6 +416,7 @@ local function stateFor(m, viewer, side, message, color)
 		control = controlled and { slot = controlled.slot or m.controlSlot, pos = controlled.card.pos, name = nameOf(controlled, viewer) } or nil,
 		canSnap = m.phase == "presnap" and canSnapFor(m, viewer, side),
 		canThrow = offense and (not m.custom or isQbPlayer(m, viewer)),
+		throwReach = offense and m.units.Offense.QB and ((18 + m.units.Offense.QB.attrs.THP * 0.35) * Y * 1.3) or nil,
 		canSwitch = not offense and not m.custom,
 		youCarry = youCarry,
 		waitingFor = waitingFor,
@@ -468,6 +469,41 @@ local function setPossession(m, who)
 	end
 end
 
+-- Your speed runs on your own client: the server sends your top speed, build-up (ACC) and any
+-- slowdown (blocked, beaten on a tackle) as attributes on your character only when they change,
+-- and MatchUI sets WalkSpeed from them every frame. Smooth, and no per-frame network traffic.
+local SPEED_KEYS = { "GDSpeed", "GDRamp", "GDAccelAt", "GDMul" }
+local function syncSpeed(player, speed, ramp, accelFrom, mul)
+	local char = player and player.Character
+	if not char then
+		return
+	end
+	mul = math.floor((mul or 1) * 20 + 0.5) / 20
+	local accelAt = accelFrom and (workspace:GetServerTimeNow() - (os.clock() - accelFrom)) or 0
+	if char:GetAttribute("GDSpeed") ~= speed then
+		char:SetAttribute("GDSpeed", speed)
+	end
+	if char:GetAttribute("GDRamp") ~= ramp then
+		char:SetAttribute("GDRamp", ramp)
+	end
+	local oldAt = char:GetAttribute("GDAccelAt")
+	if not oldAt or math.abs(oldAt - accelAt) > 0.05 then
+		char:SetAttribute("GDAccelAt", accelAt)
+	end
+	if char:GetAttribute("GDMul") ~= mul then
+		char:SetAttribute("GDMul", mul)
+	end
+end
+
+local function clearSpeed(player)
+	local char = player and player.Character
+	if char then
+		for _, k in SPEED_KEYS do
+			char:SetAttribute(k, nil)
+		end
+	end
+end
+
 local function placeAvatar(m, player, cf, speed)
 	local char, hum, root = avatarParts(m, player)
 	if not root then
@@ -478,6 +514,9 @@ local function placeAvatar(m, player, cf, speed)
 	root.AssemblyLinearVelocity = Vector3.zero
 	root.Anchored = true
 	hum.WalkSpeed = speed
+	if isPlayer(player) then
+		char:SetAttribute("GDSpeed", 0) -- standing still until the snap
+	end
 end
 
 -- Custom games: a player standing in for an NPC spot. Looks like an Npc to the play engine
@@ -806,30 +845,38 @@ local function compileRoutes(m)
 	return routes
 end
 
--- Your ball: put your avatar in place of an offensive NPC (catch or handoff).
-local function swapInto(m, slotId)
-	local unit = m.units.Offense[slotId]
+-- vs CPU / head-to-head: you take over an offensive player (the receiver you threw to, the RB on
+-- a handoff, whoever caught it). Your avatar steps into his spot and the player you were (the QB,
+-- or the receiver you had) goes back to the AI right where you stood. Returns your new unit.
+local function takeOver(m, slotId)
 	local player = offHuman(m)
-	local char, hum, root = avatarParts(m, player)
-	if not root then
-		return
+	local unit = m.units.Offense[slotId]
+	local char, _, root = avatarParts(m, player)
+	if not player or not unit or not root then
+		return unit
+	end
+	if unit.isProxy then
+		return unit -- already you
 	end
 	local oldCF = root.CFrame
-	local qb = m.units.Offense.QB
+	local left = m.taken and m.taken.npc or m.units.Offense.QB
+	if m.taken then
+		m.units.Offense[m.taken.slot] = m.taken.npc
+	end
 	root.Anchored = false
 	char:PivotTo(unit.root.CFrame)
-	root.AssemblyLinearVelocity = unit:Velocity()
 	unit:Hide(true)
-	qb:Hide(false)
-	qb:Place(CFrame.new(oldCF.Position - Vector3.new(0, 3, 0)) * oldCF.Rotation)
-	m.play.carrier = "avatar"
-	m.play.carrierCard = unit.card
-	m.play.carrierName = nameOf(unit)
-	hum.WalkSpeed = unit.speed
-	m.av[player] = { speed = unit.speed, ramp = unit.rampTime, accelFrom = os.clock() - unit.rampTime * 0.5 }
-	m.play.state = "carry"
-	setPose(qb, "block")
-	holdBall(m, "avatar")
+	left:Hide(false)
+	left:Place(CFrame.new(oldCF.Position - Vector3.new(0, 3, 0)) * oldCF.Rotation)
+	left.accelFrom = os.clock()
+	left:SetTag(("%d %s %s"):format(left.card.ovr, left.card.pos, nameOf(left)))
+	local proxy = makeProxy(m, unit, player)
+	proxy.home = unit.home
+	m.units.Offense[slotId] = proxy
+	m.taken = { slot = slotId, npc = unit }
+	m.av[player] = { speed = unit.speed, ramp = unit.rampTime, accelFrom = os.clock() - unit.rampTime * 0.5, unit = proxy }
+	fire(player, { event = "takeover", velocity = unit:Velocity() }) -- keep his momentum on your client
+	return proxy
 end
 
 -- CPU ball: an NPC becomes the ball carrier.
@@ -1267,7 +1314,21 @@ end
 -- CTH when open, CIT with a defender on him (vs MCV/ZCV), SPC to reach off-target throws.
 local function resolveCatch(m)
 	local a = m.play.air
-	local rcv = a.target
+	-- the catcher: whichever eligible receiver is closest to where the ball comes down
+	local rcv, closestRcv = nil, math.huge
+	for slotId in m.play.routes do
+		local u = m.units.Offense[slotId]
+		if u and not u.hidden then
+			local d = hdist(u:Position(), a.to)
+			if d < closestRcv then
+				rcv, closestRcv = u, d
+			end
+		end
+	end
+	if not rcv then
+		endPlay(m, "incomplete")
+		return
+	end
 	local r = rcv.attrs
 	local rcvDist = hdist(rcv:Position(), a.to)
 	local nearest, sep = nil, math.huge
@@ -1333,11 +1394,10 @@ local function resolveCatch(m)
 				return side == m.possession and "CAUGHT! RUN!" or ("CAUGHT BY " .. nameOf(rcv, viewer) .. " - TACKLE HIM!")
 			end
 			m.play.caught = true
-			if offHuman(m) then
-				swapInto(m, rcv.slot)
-			else
-				giveTo(m, rcv)
+			if offHuman(m) and not rcv.isProxy then
+				rcv = takeOver(m, rcv.slot) -- caught by a receiver you weren't playing: you take him
 			end
+			giveTo(m, rcv)
 			autoSwitch(m, rcv:Position())
 			sendState(m, catchMsg, "good")
 			return
@@ -1371,17 +1431,21 @@ local function step(m)
 	for player, av in m.av do
 		local _, hum = avatarParts(m, player)
 		if hum and av.speed then
-			local speed = av.speed * MatchConfig.Ramp(av.ramp or 0.6, now - (av.accelFrom or 0))
+			local mul = 1
 			local u = av.unit or m.avatarUnit
 			if u and u.player == player then
 				if now < u.stunUntil then
-					speed *= 0.3
+					mul = 0.3
 					av.accelFrom = u.stunUntil
 				elseif now < u.engagedUntil then
-					speed *= (1 - u.engageFactor)
+					mul = 1 - u.engageFactor
 				end
 			end
-			hum.WalkSpeed = speed
+			if isPlayer(player) then
+				syncSpeed(player, av.speed, av.ramp or 0.6, av.accelFrom, mul)
+			else
+				hum.WalkSpeed = av.speed * MatchConfig.Ramp(av.ramp or 0.6, now - (av.accelFrom or 0)) * mul -- (test bots)
+			end
 		end
 	end
 
@@ -1425,7 +1489,7 @@ local function step(m)
 	end
 
 	if now >= play.nextThink then
-		play.nextThink = now + 0.1
+		play.nextThink = now + 1 / 30
 		think(m, now)
 	end
 end
@@ -1467,10 +1531,18 @@ function endPlay(m, result, spotY, defender, receiver)
 		end
 	end
 	for p in m.viewers do
-		local _, hum = avatarParts(m, p)
+		local char, hum = avatarParts(m, p)
 		if hum then
 			hum.WalkSpeed = 0
+			if isPlayer(p) then
+				char:SetAttribute("GDSpeed", 0)
+			end
 		end
+	end
+	-- the receiver / RB you took over goes back to his NPC for the next play
+	if m.taken then
+		m.units.Offense[m.taken.slot] = m.taken.npc
+		m.taken = nil
 	end
 
 	local off, def = m.possession, other(m.possession)
@@ -1577,7 +1649,7 @@ function endPlay(m, result, spotY, defender, receiver)
 	log(("%s ball, %s/%s: %s after %.1fs -> %s"):format(m.possession, m.call and m.call.id or "?", m.defCall or "?", result, os.clock() - (play.t0 or os.clock()), message(nil, m.possession)))
 	sendState(m, message, tone)
 	local token = m.token
-	task.delay(2.6, function()
+	task.delay(MatchConfig.ResultPause, function()
 		if m.token ~= token or not m.alive then
 			return
 		end
@@ -1647,11 +1719,7 @@ local function snap(m)
 				play.handoffAt = os.clock()
 				local rb = m.units.Offense.RB
 				local rbPos = rb:Position()
-				if offHuman(m) then
-					swapInto(m, "RB")
-				else
-					giveTo(m, rb)
-				end
+				giveTo(m, offHuman(m) and takeOver(m, "RB") or rb)
 				autoSwitch(m, rbPos)
 				sendState(m, function(_, side)
 					return side == m.possession and "HANDOFF - RUN!" or "IT'S A RUN!"
@@ -1665,51 +1733,36 @@ local function snap(m)
 	sendState(m)
 end
 
--- Throw from the current QB to a receiver NPC (used by you and by the CPU QB).
-function throwBall(m, rcv)
-	local play = m.play
-	local route = play.routes[rcv.slot]
-	local from = carrierPos(m)
-	if not from or not route or rcv.hidden then
-		return
-	end
+-- How fast the QB's ball travels (studs/s): THP 70 -> 68, 95 -> 78
+local function ballSpeedFor(m)
 	local qb = m.units.Offense.QB.attrs
-	local ballSpeed = 40 + qb.THP * 0.4 -- THP 70 -> 68, 95 -> 78 studs/s
+	local speed = 40 + qb.THP * 0.4
 	local humanDefense = defHuman(m) ~= nil
 	for _, d in m.units.Defense do
 		humanDefense = humanDefense or d.isProxy == true
 	end
 	if humanDefense then
-		ballSpeed *= 0.8 -- throws hang a little longer when a human is on defense, so he can react
+		speed *= 0.8 -- throws hang a little longer when a human is on defense, so he can react
 	end
-	-- lead the receiver along his actual route (so throws hit him after his cut), at the speed
-	-- he's really moving (still building up, jammed, or in a cut), not just his top speed
-	local runSpeed = math.clamp((rcv:Velocity().Magnitude + rcv.speed) / 2, rcv.speed * 0.5, rcv.speed)
-	local function along(t)
-		if rcv.isProxy then
-			-- a player runs his own way: lead him along the way he's moving
-			return rcv:Position() + rcv:Velocity() * t
-		end
-		local pos = flat(rcv:Position())
-		local budget = runSpeed * t
-		for i = route.index, #route.points do
-			local wp = flat(route.points[i])
-			local seg = (wp - pos).Magnitude
-			if budget <= seg then
-				return (seg > 0 and pos + (wp - pos).Unit * budget or pos) + Vector3.new(0, rcv:Position().Y, 0)
-			end
-			budget -= seg
-			pos = wp
-		end
-		return pos + Vector3.new(0, rcv:Position().Y, 0)
+	return speed
+end
+
+-- How far the QB can throw (studs): his range by arm strength, plus a little that dies and sails
+local function throwReach(m)
+	return (18 + m.units.Offense.QB.attrs.THP * 0.35) * Y * 1.3
+end
+
+-- The ball leaves the QB's hand toward `aim`. His ratings decide how close it lands: SAC / MAC /
+-- DAC by distance, THP range, RUN on the move, TUP under pressure. rcv = the receiver going for it.
+local function launch(m, aim, rcv)
+	local play = m.play
+	local from = carrierPos(m)
+	if not from then
+		return
 	end
-	local predicted = rcv:Position()
-	local T = 0.1
-	for _ = 1, 4 do
-		T = hdist(predicted, from) / ballSpeed + 0.05
-		predicted = along(T)
-	end
-	local dist = hdist(predicted, from)
+	local qb = m.units.Offense.QB.attrs
+	local ballSpeed = ballSpeedFor(m)
+	local dist = hdist(aim, from)
 	local yards = dist / Y
 	-- accuracy for this distance: short / medium / deep, blended between
 	local acc
@@ -1744,14 +1797,15 @@ function throwBall(m, rcv)
 	local errMag = (100 - math.clamp(acc, 20, 99)) * 0.038 * math.clamp(dist / 45, 0.5, 2.5) * rng:NextNumber(0.2, 1)
 	log(("throw: %.0f yds, accuracy %.0f (moving %.0f%%, pressure %.0f%%), off by %.1f"):format(yards, acc, moving * 100, pressure * 100, errMag))
 	local angle = rng:NextNumber(0, math.pi * 2)
-	local to = predicted + Vector3.new(math.cos(angle) * errMag, 0, math.sin(angle) * errMag)
+	local to = aim + Vector3.new(math.cos(angle) * errMag, 0, math.sin(angle) * errMag)
+	local flight = hdist(to, from)
 	play.air = {
 		from = from + Vector3.new(0, 1.5, 0),
 		to = Vector3.new(to.X, from.Y, to.Z),
-		T = T,
+		T = flight / ballSpeed + 0.05,
 		t0 = os.clock(),
 		startedAt = workspace:GetServerTimeNow(), -- clients draw the flight from this
-		h = math.clamp(dist * 0.18, 3, 22),
+		h = math.clamp(flight * 0.18, 3, 26),
 		target = rcv,
 	}
 	if not offHuman(m) then
@@ -1766,6 +1820,45 @@ function throwBall(m, rcv)
 	sendState(m)
 end
 
+-- Throw from the current QB to a receiver, led along his route (the CPU QB, and bots).
+function throwBall(m, rcv)
+	local play = m.play
+	local route = play.routes[rcv.slot]
+	local from = carrierPos(m)
+	if not from or not route or rcv.hidden then
+		return
+	end
+	local ballSpeed = ballSpeedFor(m)
+	-- lead the receiver along his actual route (so throws hit him after his cut), at the speed
+	-- he's really moving (still building up, jammed, or in a cut), not just his top speed
+	local runSpeed = math.clamp((rcv:Velocity().Magnitude + rcv.speed) / 2, rcv.speed * 0.5, rcv.speed)
+	local function along(t)
+		if rcv.isProxy then
+			-- a player runs his own way: lead him along the way he's moving
+			return rcv:Position() + rcv:Velocity() * t
+		end
+		local pos = flat(rcv:Position())
+		local budget = runSpeed * t
+		for i = route.index, #route.points do
+			local wp = flat(route.points[i])
+			local seg = (wp - pos).Magnitude
+			if budget <= seg then
+				return (seg > 0 and pos + (wp - pos).Unit * budget or pos) + Vector3.new(0, rcv:Position().Y, 0)
+			end
+			budget -= seg
+			pos = wp
+		end
+		return pos + Vector3.new(0, rcv:Position().Y, 0)
+	end
+	local predicted = rcv:Position()
+	local T = 0.1
+	for _ = 1, 4 do
+		T = hdist(predicted, from) / ballSpeed + 0.05
+		predicted = along(T)
+	end
+	launch(m, predicted, rcv)
+end
+
 local function userThrow(m, player, key)
 	local play = m.play
 	local slotId = MatchConfig.Targets[key]
@@ -1773,6 +1866,49 @@ local function userThrow(m, player, key)
 		return
 	end
 	throwBall(m, m.units.Offense[slotId])
+end
+
+-- You (the QB) throw to a spot on the field (aimed with the mouse / a tap). The receiver nearest
+-- that spot goes for it; vs CPU / head-to-head you take him over while the ball is in the air.
+local function userThrowAt(m, player, point)
+	local play = m.play
+	if not isQbPlayer(m, player) or not play or play.state ~= "dropback" or m.call.run then
+		return
+	end
+	if point.X ~= point.X or point.Y ~= point.Y or point.Z ~= point.Z then
+		return
+	end
+	local from = carrierPos(m)
+	if not from then
+		return
+	end
+	-- on the field, and no further than his arm can reach
+	local fx, fy = m.field:ToField(point)
+	local ez = MatchConfig.EndZoneYards * Y
+	fx = math.clamp(fx, -HALF_W, HALF_W)
+	fy = math.clamp(fy, -ez, L + ez)
+	local aim = m.field:ToWorld(fx, fy, 0)
+	local offset = flat(aim - from)
+	local reach = throwReach(m)
+	if offset.Magnitude > reach then
+		local p = flat(from) + offset.Unit * reach
+		aim = Vector3.new(p.X, aim.Y, p.Z)
+	end
+	local rcv, best = nil, math.huge
+	for slotId in play.routes do
+		local u = m.units.Offense[slotId]
+		if u and not u.hidden then
+			local d = hdist(u:Position(), aim)
+			if d < best then
+				rcv, best = u, d
+			end
+		end
+	end
+	launch(m, aim, rcv)
+	if rcv and offHuman(m) == player and play.state == "air" then
+		play.air.target = takeOver(m, rcv.slot)
+		sendState(m)
+	end
 end
 
 local function cpuPlayCall(m)
@@ -2119,6 +2255,9 @@ local function exitPlayer(m, player)
 	end
 	matches[player] = nil
 	local char, hum, root = avatarParts(m, player)
+	if isPlayer(player) then
+		clearSpeed(player)
+	end
 	if root and (not isPlayer(player) or player.Parent) then
 		root.Anchored = false
 		hum.WalkSpeed = 16
@@ -2526,6 +2665,8 @@ local function handleAction(player, action, arg)
 		makeCall(m, "def", arg)
 	elseif action == "snap" and m.phase == "presnap" and canSnapFor(m, player, side) then
 		snap(m)
+	elseif action == "throwAt" and m.phase == "live" and typeof(arg) == "Vector3" and onOffense then
+		userThrowAt(m, player, arg)
 	elseif action == "throw" and m.phase == "live" and type(arg) == "number" and onOffense then
 		userThrow(m, player, arg)
 	elseif action == "switch" and not onOffense and not m.custom and (m.phase == "presnap" or m.phase == "live" or m.phase == "calls") then

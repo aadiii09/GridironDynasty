@@ -165,8 +165,8 @@ end
 -- Big two-column board above the lobby's screen
 function LeaderboardService.BuildBoard(lobby)
 	local MatchConfig = require(ReplicatedStorage.Shared.MatchConfig)
-	local L = MatchConfig.FieldLength()
-	local EZ = MatchConfig.EndZoneYards * MatchConfig.Yard
+	local L = lobby.L or MatchConfig.FieldLength()
+	local EZ = lobby.EZ or MatchConfig.EndZoneYards * MatchConfig.Yard
 	-- same spot as the lobby's big screen (Field.lua), just above it
 	local at = lobby:ToWorld(0, L + EZ + 50, 54)
 	local part = Instance.new("Part")

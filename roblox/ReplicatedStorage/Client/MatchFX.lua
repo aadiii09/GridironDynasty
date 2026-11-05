@@ -167,9 +167,9 @@ local function avatarPose()
 		return userBall and "qb" or "stance2"
 	end
 	if state.phase == "live" and userBall then
-		if state.playState == "carry" then
+		if state.youCarry then
 			return "carry"
-		elseif state.playState == "dropback" then
+		elseif state.playState == "dropback" and state.canThrow then
 			return "qb"
 		end
 	end

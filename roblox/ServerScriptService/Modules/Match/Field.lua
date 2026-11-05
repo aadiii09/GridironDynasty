@@ -51,7 +51,8 @@ local function paint(parent, text, cf, size, color, rot, transparency)
 	return p
 end
 
--- opts: { homeName, awayName, homeColor2, awayColor2, crowd = {Color3...}, origin = Vector3 }
+-- opts: { homeName, awayName, homeColor2, awayColor2, crowd = {Color3...}, origin = Vector3,
+--         dims = { FieldYards, EndZoneYards, WidthYards } (default: MatchConfig's full field) }
 function Field.new(homeColor, awayColor, opts)
 	opts = opts or {}
 	local slot
@@ -65,12 +66,15 @@ function Field.new(homeColor, awayColor, opts)
 
 	local self = setmetatable({}, Field)
 	self.slot = slot
-	self.origin = opts.origin or Vector3.new(3000 + slot * 900, 0, 0)
+	self.origin = opts.origin or Vector3.new(3000 + slot * 1000, 0, 0)
 
+	local dims = opts.dims or MatchConfig
+	local fieldYards = dims.FieldYards
 	local Y = MatchConfig.Yard
-	local L = MatchConfig.FieldLength()
-	local EZ = MatchConfig.EndZoneYards * Y
-	local W = MatchConfig.WidthYards * Y
+	local L = fieldYards * Y
+	local EZ = dims.EndZoneYards * Y
+	local W = dims.WidthYards * Y
+	self.L, self.EZ, self.W = L, EZ, W
 	local model = Instance.new("Model")
 	model.Name = opts.name or ("MatchField_" .. (slot or 0))
 	self.model = model
@@ -85,7 +89,7 @@ function Field.new(homeColor, awayColor, opts)
 
 	-- ground + turf --------------------------------------------------------------------
 	part({ Name = "Ground", Size = Vector3.new(W + 150, 2, L + EZ * 2 + 120), Position = Vector3.new(mid.X, GROUND_TOP - 1, mid.Z), Color = Color3.fromRGB(38, 92, 46), Material = Enum.Material.Grass }, model)
-	local stripes = MatchConfig.FieldYards / 5
+	local stripes = fieldYards / 5
 	for i = 0, stripes - 1 do
 		local shade = i % 2 == 0 and Color3.fromRGB(52, 138, 62) or Color3.fromRGB(44, 122, 54)
 		part({ Size = Vector3.new(W, 0.06, 5 * Y), Position = at(0, (i + 0.5) * 5 * Y, 0.02), Color = shade, Material = Enum.Material.Grass, CanCollide = false }, deco)
@@ -107,19 +111,19 @@ function Field.new(homeColor, awayColor, opts)
 	endZone(L + EZ / 2, awayColor, opts.awayName, -90)
 
 	-- lines: goal lines, every 5 yards, sidelines, hash marks, yard numbers
-	for yd = 0, MatchConfig.FieldYards, 5 do
+	for yd = 0, fieldYards, 5 do
 		local major = yd % 10 == 0
-		part({ Size = Vector3.new(W, 0.08, (yd == 0 or yd == MatchConfig.FieldYards) and 0.9 or (major and 0.45 or 0.3)), Position = at(0, yd * Y, 0.05), Color = WHITE, CanCollide = false, Transparency = major and 0 or 0.25 }, deco)
+		part({ Size = Vector3.new(W, 0.08, (yd == 0 or yd == fieldYards) and 0.9 or (major and 0.45 or 0.3)), Position = at(0, yd * Y, 0.05), Color = WHITE, CanCollide = false, Transparency = major and 0 or 0.25 }, deco)
 	end
-	for yd = 1, MatchConfig.FieldYards - 1 do
+	for yd = 1, fieldYards - 1 do
 		if yd % 5 ~= 0 then
 			for _, x in { -W * 0.16, W * 0.16, -W / 2 + 1.2, W / 2 - 1.2 } do
 				part({ Size = Vector3.new(1.4, 0.08, 0.22), Position = at(x, yd * Y, 0.05), Color = WHITE, CanCollide = false, Transparency = 0.15 }, deco)
 			end
 		end
 	end
-	for yd = 10, MatchConfig.FieldYards - 10, 10 do
-		local n = yd <= MatchConfig.FieldYards / 2 and yd or MatchConfig.FieldYards - yd
+	for yd = 10, fieldYards - 10, 10 do
+		local n = yd <= fieldYards / 2 and yd or fieldYards - yd
 		for _, side in { -1, 1 } do
 			paint(deco, tostring(n), CFrame.new(at(side * (W / 2 - 9), yd * Y, 0.09)), Vector2.new(9, 6), WHITE, side == 1 and 90 or -90, 0.05)
 		end
@@ -146,6 +150,7 @@ function Field.new(homeColor, awayColor, opts)
 	end
 	local rng = Random.new(self.origin.X)
 	local standLen = L + EZ * 2 + 10
+	local fanScale = math.max(1, standLen / 240) -- long stands: bigger "fans" so the part count stays sane
 	for _, side in { -1, 1 } do
 		local x0 = side * (W / 2 + 22)
 		for row = 0, 6 do
@@ -155,7 +160,7 @@ function Field.new(homeColor, awayColor, opts)
 			-- crowd: chunky "fans" in team colors
 			local y = -EZ
 			while y < L + EZ do
-				local len = rng:NextNumber(2.4, 4.2)
+				local len = rng:NextNumber(2.4, 4.2) * fanScale
 				part({ Size = Vector3.new(2.6, rng:NextNumber(2.6, 3.4), len - 0.4), Position = at(x, y + len / 2, h + 2.4), Color = crowd[rng:NextInteger(1, #crowd)], CanCollide = false, Material = Enum.Material.SmoothPlastic }, deco)
 				y += len
 			end
@@ -185,13 +190,13 @@ function Field.new(homeColor, awayColor, opts)
 
 	-- light towers (real SpotLights aimed at the field)
 	for _, sx in { -1, 1 } do
-		for _, y in { -EZ * 0.5, L + EZ * 0.5 } do
+		for _, y in (L > 240 and { -EZ * 0.5, L / 2, L + EZ * 0.5 } or { -EZ * 0.5, L + EZ * 0.5 }) do
 			local base = at(sx * (W / 2 + 62), y, 0)
 			part({ Size = Vector3.new(2.5, 70, 2.5), Position = base + Vector3.new(0, 35, 0), Color = Color3.fromRGB(70, 74, 84), Material = Enum.Material.Metal }, deco)
 			local head = part({ Size = Vector3.new(14, 8, 1.5), CFrame = CFrame.lookAt(base + Vector3.new(0, 72, 0), mid), Color = Color3.fromRGB(255, 250, 230), Material = Enum.Material.Neon }, deco)
 			local light = Instance.new("SpotLight")
 			light.Face = Enum.NormalId.Front
-			light.Range = 160
+			light.Range = L > 240 and 210 or 160
 			light.Angle = 60
 			light.Brightness = 1.8
 			light.Color = Color3.fromRGB(255, 246, 225)
@@ -259,7 +264,7 @@ end
 
 function Field:ToWorld(x, y, h)
 	if self.flipped then
-		x, y = -x, MatchConfig.FieldLength() - y
+		x, y = -x, self.L - y
 	end
 	return self.origin + Vector3.new(x, GROUND_TOP + (h or 0), -y)
 end
@@ -268,7 +273,7 @@ function Field:ToField(pos)
 	local rel = pos - self.origin
 	local x, y = rel.X, -rel.Z
 	if self.flipped then
-		x, y = -x, MatchConfig.FieldLength() - y
+		x, y = -x, self.L - y
 	end
 	return x, y
 end
@@ -286,8 +291,8 @@ end
 function Field:SetMarkers(losY, firstDownY)
 	self.losMarker.Transparency = 0.45
 	self.losMarker.Position = self:ToWorld(0, losY, 0.1)
-	self.firstDownMarker.Position = self:ToWorld(0, math.min(firstDownY, MatchConfig.FieldLength()), 0.1)
-	self.firstDownMarker.Transparency = firstDownY >= MatchConfig.FieldLength() and 1 or 0.3
+	self.firstDownMarker.Position = self:ToWorld(0, math.min(firstDownY, self.L), 0.1)
+	self.firstDownMarker.Transparency = firstDownY >= self.L and 1 or 0.3
 end
 
 function Field:SetScreen(text)
