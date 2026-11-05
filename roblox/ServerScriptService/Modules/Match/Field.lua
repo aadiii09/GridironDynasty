@@ -142,67 +142,135 @@ function Field.new(homeColor, awayColor, opts)
 		end
 	end
 
-	-- stands + crowd on both sidelines -----------------------------------------------------
-	-- crowd colors are toned down so the stadium lights + bloom don't blow them out
-	local crowd = {}
-	for _, c in opts.crowd or { homeColor, awayColor, WHITE, Color3.fromRGB(40, 40, 46) } do
-		table.insert(crowd, c:Lerp(Color3.fromRGB(30, 30, 38), 0.35))
-	end
-	local rng = Random.new(self.origin.X)
-	local standLen = L + EZ * 2 + 10
-	local fanScale = math.max(1, standLen / 240) -- long stands: bigger "fans" so the part count stays sane
-	for _, side in { -1, 1 } do
-		local x0 = side * (W / 2 + 22)
-		for row = 0, 6 do
-			local x = x0 + side * row * 5
-			local h = row * 3
-			part({ Size = Vector3.new(5, h + 2, standLen), Position = at(x, L / 2, h / 2), Color = Color3.fromRGB(58, 62, 72), Material = Enum.Material.Concrete }, deco)
-			-- crowd: chunky "fans" in team colors
-			local y = -EZ
-			while y < L + EZ do
-				local len = rng:NextNumber(2.4, 4.2) * fanScale
-				part({ Size = Vector3.new(2.6, rng:NextNumber(2.6, 3.4), len - 0.4), Position = at(x, y + len / 2, h + 2.4), Color = crowd[rng:NextInteger(1, #crowd)], CanCollide = false, Material = Enum.Material.SmoothPlastic }, deco)
-				y += len
-			end
+	-- field details: pylons, midfield logo, sideline restraining line, team bench areas ------------
+	local ORANGE = Color3.fromRGB(255, 120, 30)
+	for _, gy in { 0, -EZ, L, L + EZ } do
+		for _, sx in { -1, 1 } do
+			part({ Name = "Pylon", Size = Vector3.new(0.7, 2.2, 0.7), Position = at(sx * (W / 2 + 0.4), gy, 1.1), Color = ORANGE, Material = Enum.Material.SmoothPlastic, CanCollide = false }, deco)
 		end
-		-- back wall with LED ribbon
-		local xw = x0 + side * 36
-		part({ Size = Vector3.new(2, 26, standLen), Position = at(xw, L / 2, 13), Color = Color3.fromRGB(30, 32, 40), Material = Enum.Material.Concrete }, deco)
-		local ribbon = part({ Size = Vector3.new(0.4, 3, standLen), Position = at(x0 - side * 1.5, L / 2, 2.2), Color = Color3.fromRGB(10, 12, 18), Material = Enum.Material.SmoothPlastic, CanCollide = false }, deco)
+	end
+	-- midfield logo: a team-tinted circle with the GD mark
+	part({ Name = "MidLogo", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.06, 30, 30), CFrame = CFrame.new(at(0, L / 2, 0.07)) * CFrame.Angles(0, 0, math.rad(90)), Color = homeColor, Transparency = 0.45, CanCollide = false }, deco)
+	paint(deco, "GD", CFrame.new(at(0, L / 2, 0.1)), Vector2.new(12, 20), WHITE, -90, 0.1)
+	for _, side in { -1, 1 } do
+		-- orange dashed restraining line just outside the sideline
+		for yd = -MatchConfig.EndZoneYards, (L + EZ) / Y, 3 do
+			part({ Size = Vector3.new(0.5, 0.07, 1.6), Position = at(side * (W / 2 + 5), yd * Y, 0.04), Color = ORANGE, CanCollide = false }, deco)
+		end
+		-- team bench area between the 30s with a bench
+		local benchColor = side < 0 and homeColor or awayColor
+		part({ Size = Vector3.new(9, 0.06, L * 0.4), Position = at(side * (W / 2 + 11), L / 2, 0.03), Color = benchColor:Lerp(Color3.new(0, 0, 0), 0.45), CanCollide = false }, deco)
+		part({ Size = Vector3.new(1.4, 1.4, L * 0.3), Position = at(side * (W / 2 + 14), L / 2, 0.7), Color = Color3.fromRGB(34, 36, 44), Material = Enum.Material.Metal }, deco)
+	end
+
+	-- the bowl: a lower deck, a lit fascia, an upper deck and a roof with light banks ---------------
+	-- Every row is one step with a crowd texture on its field-facing face (cheap: a few dozen parts
+	-- instead of a thousand single fans).
+	local CROWD = "rbxassetid://138227626787476"
+	local CONCRETE = Color3.fromRGB(52, 56, 66)
+	local function tint(c)
+		return Color3.new(1, 1, 1):Lerp(c, 0.2)
+	end
+	-- one row: at distance `d` outward from the field edge, `h` tall, `len` long. axis "x" = runs
+	-- along the sideline (stands on the sides), "y" = runs across the field (end stands)
+	local function row(axis, side, edge, d, h, len, center, color)
+		local size, pos, face
+		if axis == "x" then
+			size = Vector3.new(4.2, h, len)
+			pos = at(side * (edge + d), center, h / 2)
+			face = side > 0 and Enum.NormalId.Left or Enum.NormalId.Right
+		else
+			size = Vector3.new(len, h, 4.2)
+			pos = at(center, edge + side * d, h / 2)
+			face = side > 0 and Enum.NormalId.Front or Enum.NormalId.Back
+		end
+		local step = part({ Size = size, Position = pos, Color = CONCRETE, Material = Enum.Material.Concrete }, deco)
+		local tex = Instance.new("Texture")
+		tex.Texture = CROWD
+		tex.Face = face
+		tex.StudsPerTileU = 26
+		tex.StudsPerTileV = 6.4
+		tex.OffsetStudsV = (h % 6.4) -- keep the fans standing on the step
+		tex.Color3 = color
+		tex.Parent = step
+		return step
+	end
+	local LOWER, UPPER = 9, 9
+	local RISE = 2.6
+	local function deck(axis, side, edge, len, center, color, rows0)
+		local tops = {}
+		for i = 0, LOWER - 1 do
+			tops[i] = 2 + i * RISE
+			row(axis, side, edge, 24 + i * 4.2, tops[i], len, center, color)
+		end
+		-- fascia between the decks: a lit ribbon
+		local fasciaD = 24 + LOWER * 4.2 + 1
+		local fasciaH = tops[LOWER - 1] + 7
+		local fascia
+		if axis == "x" then
+			fascia = part({ Size = Vector3.new(2, fasciaH, len), Position = at(side * (edge + fasciaD), center, fasciaH / 2), Color = Color3.fromRGB(14, 16, 24), Material = Enum.Material.SmoothPlastic }, deco)
+		else
+			fascia = part({ Size = Vector3.new(len, fasciaH, 2), Position = at(center, edge + side * fasciaD, fasciaH / 2), Color = Color3.fromRGB(14, 16, 24), Material = Enum.Material.SmoothPlastic }, deco)
+		end
+		for i = 0, UPPER - 1 do
+			row(axis, side, edge, fasciaD + 2 + i * 4.2, fasciaH + 2 + i * RISE, len, center, color)
+		end
+		return fascia, fasciaD, fasciaH, fasciaH + 2 + (UPPER - 1) * RISE, fasciaD + 2 + UPPER * 4.2
+	end
+	local function ribbonOn(fasciaPart, face)
 		local sg = Instance.new("SurfaceGui")
-		sg.Face = side == 1 and Enum.NormalId.Left or Enum.NormalId.Right
+		sg.Face = face
 		sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-		sg.PixelsPerStud = 12
+		sg.PixelsPerStud = 10
 		sg.LightInfluence = 0
 		sg.Brightness = 2
 		local bar = Instance.new("TextLabel")
-		bar.Size = UDim2.fromScale(1, 1)
+		bar.AnchorPoint = Vector2.new(0, 1)
+		bar.Position = UDim2.fromScale(0, 1)
+		bar.Size = UDim2.new(1, 0, 0, 40)
 		bar.BackgroundColor3 = Color3.fromRGB(8, 10, 16)
 		bar.FontFace = FONT
 		bar.TextScaled = true
 		bar.TextColor3 = Color3.fromRGB(46, 255, 140)
-		bar.Text = string.rep("GRIDIRON DYNASTY   ///   ", 6)
+		bar.Text = string.rep("GRIDIRON DYNASTY   ///   ", 8)
 		bar.Parent = sg
-		sg.Parent = ribbon
+		sg.Parent = fasciaPart
 		self.ribbons = self.ribbons or {}
 		table.insert(self.ribbons, bar)
 	end
-
-	-- light towers (real SpotLights aimed at the field)
-	for _, sx in { -1, 1 } do
-		for _, y in (L > 240 and { -EZ * 0.5, L / 2, L + EZ * 0.5 } or { -EZ * 0.5, L + EZ * 0.5 }) do
-			local base = at(sx * (W / 2 + 62), y, 0)
-			part({ Size = Vector3.new(2.5, 70, 2.5), Position = base + Vector3.new(0, 35, 0), Color = Color3.fromRGB(70, 74, 84), Material = Enum.Material.Metal }, deco)
-			local head = part({ Size = Vector3.new(14, 8, 1.5), CFrame = CFrame.lookAt(base + Vector3.new(0, 72, 0), mid), Color = Color3.fromRGB(255, 250, 230), Material = Enum.Material.Neon }, deco)
+	local sideLen = L + EZ * 2 + 70
+	for _, side in { -1, 1 } do
+		local color = tint(side < 0 and homeColor or awayColor)
+		local fascia, _, _, topH, backD = deck("x", side, W / 2, sideLen, L / 2, color)
+		ribbonOn(fascia, side > 0 and Enum.NormalId.Left or Enum.NormalId.Right)
+		-- back wall + roof canopy with a light bank along its front edge
+		local wallX = side * (W / 2 + backD + 1)
+		part({ Size = Vector3.new(2, topH + 14, sideLen), Position = at(wallX, L / 2, (topH + 14) / 2), Color = Color3.fromRGB(26, 28, 36), Material = Enum.Material.Concrete }, deco)
+		local roofH = topH + 14
+		part({ Size = Vector3.new(30, 1.5, sideLen), Position = at(wallX - side * 15, L / 2, roofH), Color = Color3.fromRGB(30, 32, 40), Material = Enum.Material.Metal }, deco)
+		local bankX = wallX - side * 29
+		local n = math.max(3, math.floor(sideLen / 60))
+		for k = 0, n - 1 do
+			local y = -EZ - 35 + (k + 0.5) * sideLen / n
+			local bank = part({ Name = "LightBank", Size = Vector3.new(1, 4, sideLen / n * 0.7), CFrame = CFrame.lookAt(at(bankX, y, roofH - 2.5), at(0, y, 0)), Color = Color3.fromRGB(255, 252, 238), Material = Enum.Material.Neon, CanCollide = false }, deco)
 			local light = Instance.new("SpotLight")
 			light.Face = Enum.NormalId.Front
-			light.Range = L > 240 and 210 or 160
-			light.Angle = 60
-			light.Brightness = 1.8
+			light.Range = 240
+			light.Angle = 75
+			light.Brightness = 1.6
 			light.Color = Color3.fromRGB(255, 246, 225)
 			light.Shadows = false
-			light.Parent = head
+			light.Parent = bank
 		end
+	end
+	-- home end: a full bowl section behind the end zone (the away end keeps the big screen)
+	do
+		local fascia = deck("y", -1, -EZ, W + 70, 0, tint(homeColor))
+		ribbonOn(fascia, Enum.NormalId.Back)
+	end
+	-- away end: a low stand under the big screen
+	for i = 0, 3 do
+		row("y", 1, L + EZ, 24 + i * 4.2, 2 + i * RISE, W + 70, 0, tint(awayColor))
 	end
 
 	-- big screen behind the away end zone
@@ -254,7 +322,9 @@ function Field.new(homeColor, awayColor, opts)
 		part({ Size = Vector3.new(W + 36, 14, 2), Position = at(0, y, 7), Transparency = 1 }, model)
 	end
 
-	-- markers moved every play
+	-- markers moved every play (lines on the field + the chain crew's poles on the sideline)
+	self.downPole = part({ Name = "DownMarker", Size = Vector3.new(0.5, 7, 0.5), Color = ORANGE, Material = Enum.Material.Neon, CanCollide = false, Transparency = 1 }, model)
+	self.chainPole = part({ Name = "ChainMarker", Size = Vector3.new(0.5, 7, 0.5), Color = ORANGE, Material = Enum.Material.Neon, CanCollide = false, Transparency = 1 }, model)
 	self.losMarker = part({ Name = "LineOfScrimmage", Size = Vector3.new(W, 0.1, 0.5), Color = Color3.fromRGB(70, 160, 255), CanCollide = false, Material = Enum.Material.Neon, Transparency = 1 }, model)
 	self.firstDownMarker = part({ Name = "FirstDown", Size = Vector3.new(W, 0.1, 0.5), Color = Color3.fromRGB(255, 214, 40), CanCollide = false, Material = Enum.Material.Neon, Transparency = 1 }, model)
 
@@ -289,6 +359,13 @@ function Field:CFrameAt(x, y, h, facingDownfield)
 end
 
 function Field:SetMarkers(losY, firstDownY)
+	local sideX = -(self.W / 2 + 4)
+	if self.downPole then
+		self.downPole.Position = self:ToWorld(self.flipped and -sideX or sideX, losY, 3.5)
+		self.downPole.Transparency = 0
+		self.chainPole.Position = self:ToWorld(self.flipped and -sideX or sideX, math.min(firstDownY, self.L), 3.5)
+		self.chainPole.Transparency = firstDownY >= self.L and 1 or 0
+	end
 	self.losMarker.Transparency = 0.45
 	self.losMarker.Position = self:ToWorld(0, losY, 0.1)
 	self.firstDownMarker.Position = self:ToWorld(0, math.min(firstDownY, self.L), 0.1)

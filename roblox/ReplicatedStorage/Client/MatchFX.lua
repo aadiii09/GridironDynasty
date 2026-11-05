@@ -71,6 +71,14 @@ local POSES = {
 		LeftShoulder = A(rad(150), 0, rad(10)), LeftElbow = A(rad(20), 0, 0),
 		RightHip = A(rad(-15), 0, 0), LeftHip = A(rad(10), 0, 0),
 	},
+	catch = { -- reaching for the ball: both arms up and out front
+		RightShoulder = A(rad(150), 0, rad(-10)), LeftShoulder = A(rad(150), 0, rad(10)),
+		RightElbow = A(rad(10), 0, 0), LeftElbow = A(rad(10), 0, 0),
+	},
+	stiffarm = { -- one arm locked out in front
+		RightShoulder = A(rad(85), 0, 0), RightElbow = A(0, 0, 0),
+		LeftShoulder = A(rad(30), 0, 0), LeftElbow = A(rad(70), 0, 0),
+	},
 	celebrate = { -- arms up!
 		RightShoulder = A(rad(165), 0, rad(-25)), RightElbow = A(rad(10), 0, 0),
 		LeftShoulder = A(rad(165), 0, rad(25)), LeftElbow = A(rad(10), 0, 0),
@@ -421,6 +429,11 @@ function MatchFX.Update(s)
 		Sounds.SetLoop("crowdLoop")
 	end
 	cues(s, prev)
+end
+
+-- Your avatar strikes a pose for a moment (moves: dive, stiff arm, block, catch)
+function MatchFX.LocalPose(pose, duration)
+	localPose, localPoseUntil = pose, os.clock() + (duration or 0.5)
 end
 
 function MatchFX.Fall()

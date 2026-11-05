@@ -145,6 +145,15 @@ local function isQbPlayer(m, player)
 	return qb ~= nil and qb.isProxy == true and qb.player == player
 end
 
+-- Player moves (MatchUI action buttons: juke / spin / stiff arm / dive / catch / jump / block):
+-- the last time each player used each one. Ratings still decide what happens; the move picks
+-- WHICH rating and gives a bonus for timing it.
+local MOVE_COOLDOWN = { juke = 1.2, spin = 1.2, stiff = 1.2, dive = 2, catch = 0.6, jump = 1, block = 1.2 }
+local function movedRecently(m, player, kind, window)
+	local t = player and m.moves and m.moves[player] and m.moves[player][kind]
+	return t ~= nil and os.clock() - t <= window
+end
+
 -- Who may snap: the offense (its caller in custom games), or the defense when the AI has the ball
 local function canSnapFor(m, player, side)
 	if not m.custom then
@@ -957,7 +966,7 @@ end
 
 -- Play engine --------------------------------------------------------------------------------
 
-local endPlay, throwBall -- forward
+local endPlay, throwBall, doMove -- forward
 
 -- The ball carrier's ratings (the card of whoever has the ball)
 local function carrierAttrs(m)
@@ -995,15 +1004,34 @@ local function attemptTackle(m, def, now)
 		return x[2] > y[2]
 	end)
 	-- usually his best move, sometimes his second best
-	local pick = (#moves > 1 and chance(0.25)) and moves[2] or moves[1]
+	-- a player carrying the ball who just used a move: that's the move, with a bonus for timing it
+	local carrierPlayer = (m.play.carrier == "avatar" and offHuman(m)) or (type(m.play.carrier) == "table" and m.play.carrier.isAvatar and m.play.carrier.player) or nil
+	local forced
+	if carrierPlayer then
+		local timed = {
+			juke = { "JUKED", c.JKM + (c.AGI - d.AGI) * 0.15 },
+			spin = { "SPIN MOVE", c.SPM },
+			stiff = { "STIFF ARM", c.SFA + (c.STR - d.STR) * 0.15 },
+		}
+		for kind, entry in timed do
+			if movedRecently(m, carrierPlayer, kind, 0.6) then
+				forced = { entry[1], entry[2] + 14 }
+			end
+		end
+	end
+	local pick = forced or ((#moves > 1 and chance(0.25)) and moves[2] or moves[1])
 	local moveName, move = pick[1], pick[2]
 	local tak = d.TAK + (fromBehind and 6 or 0)
 	local p = math.clamp(0.64 + (tak - move) * 0.013, 0.22, 0.94)
 	if sack then
 		p = math.clamp(0.72 + (d.TAK - move) * 0.01, 0.45, 0.96)
 	end
+	local diving = def.isAvatar and movedRecently(m, def.player, "dive", 0.7)
 	if def.isAvatar then
 		p = math.min(0.97, p + 0.1) -- a little help when you make the hit
+	end
+	if diving then
+		p = math.min(0.98, p + 0.12) -- laying out for it
 	end
 	def.tackleReadyAt = now + (def.isAvatar and 0.8 or 1.4)
 	if chance(p) then
@@ -1022,6 +1050,8 @@ local function attemptTackle(m, def, now)
 		local pFumble = math.clamp(0.008 + (d.POW - c.CAR) * 0.0014 + (m.play.bigHit and 0.015 or 0), 0.003, 0.06)
 		if sack then
 			callout(m, def, "SACK!", GOLD)
+		elseif diving then
+			callout(m, def, "DIVING TACKLE!", GOLD)
 		elseif m.play.bigHit then
 			callout(m, def, "BIG HIT!", GOLD)
 		end
@@ -1367,9 +1397,12 @@ local function resolveCatch(m)
 			end
 		end
 	end
-	if me and meDist < 4.5 then
+	-- a human defender who jumps for it reaches further; pressing catch in time is a real shot at the pick
+	local meReach = 4.5 + ((me and movedRecently(m, me.player, "jump", 0.8)) and 1.5 or 0)
+	if me and meDist < meReach then
 		local myCov = m.defCall == "zone" and me.attrs.ZCV or me.attrs.MCV
-		local pInt = math.clamp(0.16 + (4.5 - meDist) * 0.09 + (myCov - 60) * 0.004 + (me.attrs.CTH - 50) * 0.004 + (rcvDist > 4 and 0.15 or 0), 0.12, 0.65)
+		local timedCatch = movedRecently(m, me.player, "catch", 0.6)
+		local pInt = math.clamp(0.16 + (meReach - meDist) * 0.09 + (myCov - 60) * 0.004 + (me.attrs.CTH - 50) * 0.004 + (rcvDist > 4 and 0.15 or 0) + (timedCatch and 0.12 or -0.05), 0.08, 0.72)
 		log(("pick check: you %.1f from the ball, chance %.0f%%"):format(meDist, pInt * 100))
 		if chance(pInt) then
 			callout(m, me, "PICKED OFF!", GOLD)
@@ -1387,9 +1420,16 @@ local function resolveCatch(m)
 	end
 	-- spectacular catchers get to throws other receivers can't
 	local reach = 3.6 + (r.SPC - 50) * 0.035 + (rcv.isAvatar and 1.2 or 0) -- a player-controlled receiver gets a little help
+	if rcv.isAvatar and movedRecently(m, rcv.player, "jump", 0.8) then
+		reach += 1.6 -- high-pointed it
+	end
 	if rcvDist <= reach then
-		local breakup = (me and meDist < 4.5) and 0.3 or 0
+		local breakup = (me and meDist < meReach) and 0.3 or 0
 		local pCatch = 0.58 + r.CTH * 0.0042
+		if rcv.isAvatar then
+			-- a player catching: pressing catch as it arrives secures it
+			pCatch += movedRecently(m, rcv.player, "catch", 0.6) and 0.12 or -0.08
+		end
 		if nearest and sep < 3 then
 			-- contested: catch in traffic vs the defender's coverage
 			pCatch -= (3 - sep) / 3 * math.clamp(0.32 + (cov - r.CIT) * 0.006, 0.08, 0.55)
@@ -1495,7 +1535,7 @@ local function step(m)
 	if play.state == "dropback" or play.state == "carry" then
 		for _, d in defenders(m) do
 			local blocked = now < d.engagedUntil and not d.isAvatar
-			if not blocked and now >= d.stunUntil and now >= (d.tackleReadyAt or 0) and hdist(d:Position(), pos) < (d.isAvatar and AVATAR_TACKLE_RANGE or TACKLE_RANGE) then
+			if not blocked and now >= d.stunUntil and now >= (d.tackleReadyAt or 0) and hdist(d:Position(), pos) < (d.isAvatar and (movedRecently(m, d.player, "dive", 0.6) and 8 or AVATAR_TACKLE_RANGE) or TACKLE_RANGE) then
 				attemptTackle(m, d, now)
 				if play.state == "dead" then
 					return
@@ -1568,7 +1608,7 @@ function endPlay(m, result, spotY, defender, receiver)
 		tally(m, off, "td")
 		tally(m, off, play.caught and "passTd" or "rushTd")
 	end
-	if spotY and yards > 0 and (result == "td" or result == "tackle" or result == "out" or result == "timeout") then
+	if spotY and yards > 0 and (result == "td" or result == "tackle" or result == "dive" or result == "out" or result == "timeout") then
 		tally(m, off, "yards", math.floor(yards + 0.5))
 	end
 	if result == "sack" then
@@ -1649,7 +1689,7 @@ function endPlay(m, result, spotY, defender, receiver)
 			msg = "SAFETY"
 		else
 			local by = nameOf(defender, viewer)
-			local verb = result == "sack" and ("SACKED by " .. by) or result == "out" and "Out of bounds" or result == "timeout" and "Whistle" or ((play.bigHit and "BIG HIT by " or "Tackled by ") .. by)
+			local verb = result == "sack" and ("SACKED by " .. by) or result == "out" and "Out of bounds" or result == "timeout" and "Whistle" or result == "dive" and "Dove forward" or ((play.bigHit and "BIG HIT by " or "Tackled by ") .. by)
 			msg = ("%s  (%+d yds)"):format(verb, math.floor(yards + (yards >= 0 and 0.5 or -0.5)))
 		end
 		if suffix == "first" then
@@ -2308,8 +2348,11 @@ local function buildTeam(m, cards, infos, primary, secondary, jersey)
 	return team
 end
 
+-- Would these two jerseys be hard to tell apart on the field? (distance in color space; two blues
+-- like 26,68,188 and 67,97,238 count as the same)
 local function near(a, b)
-	return math.abs(a.R - b.R) + math.abs(a.G - b.G) + math.abs(a.B - b.B) < 0.45
+	local dr, dg, db = a.R - b.R, a.G - b.G, a.B - b.B
+	return math.sqrt(dr * dr + dg * dg + db * db) < 0.4
 end
 
 local function jerseyOf(profile)
@@ -2665,6 +2708,77 @@ function MatchService.StartCustom(spec)
 	return m ~= nil, err
 end
 
+-- The unit a player is playing right now (vs CPU / head-to-head defender, or any proxy)
+local function playerUnit(m, player)
+	if m.avatarUnit and m.avatarUnit.player == player then
+		return m.avatarUnit
+	end
+	for _, units in m.units or {} do
+		for _, u in units do
+			if u.isProxy and u.player == player then
+				return u
+			end
+		end
+	end
+	return nil
+end
+
+-- What a move does beyond its time stamp (the timed bonuses live in attemptTackle / resolveCatch)
+function doMove(m, player, side, kind, now)
+	local play = m.play
+	local carrier = play.carrier
+	local isCarrier = (carrier == "avatar" and offHuman(m) == player) or (type(carrier) == "table" and carrier.isAvatar == true and carrier.player == player)
+	local onOffense = side == m.possession
+	local token = m.token
+	if kind == "dive" then
+		if isCarrier and play.state == "carry" then
+			-- a carrier lays out for the extra yards and goes down where he lands
+			task.delay(0.6, function()
+				if m.token == token and m.play == play and play.state == "carry" and play.carrier == carrier then
+					local pos = carrierPos(m)
+					if pos then
+						local _, fy = m.field:ToField(pos)
+						endPlay(m, "dive", fy)
+					end
+				end
+			end)
+		elseif not onOffense then
+			-- a defender who dives and misses is on the turf for a moment
+			local unit = playerUnit(m, player)
+			task.delay(0.65, function()
+				if unit and m.token == token and m.play == play and play.state ~= "dead" then
+					unit.stunUntil = os.clock() + 0.9
+					fire(player, { event = "fall" })
+				end
+			end)
+		end
+	elseif kind == "block" and onOffense and not isCarrier then
+		-- lock up the nearest defender: your blocking vs his pass rush / block shedding
+		local _, _, root = avatarParts(m, player)
+		if not root then
+			return
+		end
+		local unit = playerUnit(m, player)
+		local a = unit and unit.attrs or m.units.Offense.QB.attrs
+		local best, bestD = nil, 6
+		for _, dfd in defenders(m) do
+			local dd = hdist(dfd:Position(), root.Position)
+			if dd < bestD and dfd.player ~= player then
+				best, bestD = dfd, dd
+			end
+		end
+		if best then
+			local v = best.attrs
+			local hold = math.clamp(0.55 + ((a.PBK + a.RBK) / 2 - (v.PMV + v.BSH) / 2) * 0.01 + (a.STR - v.STR) * 0.004, 0.3, 0.88)
+			best.engagedUntil = now + 0.9
+			best.engageFactor = hold
+			if hold >= 0.75 then
+				callout(m, unit or best, "PANCAKE!", GOLD)
+			end
+		end
+	end
+end
+
 local function handleAction(player, action, arg)
 	local m = matches[player]
 	if not m or not m.alive then
@@ -2714,6 +2828,16 @@ local function handleAction(player, action, arg)
 			switchControl(m, cycle[i % #cycle + 1])
 		end
 		sendState(m)
+	elseif action == "move" and type(arg) == "string" and MOVE_COOLDOWN[arg] and m.phase == "live" and m.play and m.play.state ~= "dead" then
+		local now = os.clock()
+		m.moves = m.moves or {}
+		local mine = m.moves[player] or {}
+		m.moves[player] = mine
+		if mine[arg] and now - mine[arg] < MOVE_COOLDOWN[arg] then
+			return
+		end
+		mine[arg] = now
+		doMove(m, player, side, arg, now)
 	elseif action == "leave" then
 		exitPlayer(m, player)
 	end

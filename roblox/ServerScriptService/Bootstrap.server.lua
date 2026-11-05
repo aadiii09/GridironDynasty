@@ -264,8 +264,25 @@ local function toStage(player)
 	if not char or MatchService.InMatch(player) then
 		return
 	end
-	-- a spot near midfield, facing the hub camera (big screen + leaderboard behind you)
-	local spot = Vector3.new(rngStage:NextNumber(-3, 3), 4, rngStage:NextNumber(-2, 2))
+	-- a free spot near midfield, facing the hub camera (big screen + leaderboard behind you). Each
+	-- player gets their own spot (players used to land on top of each other); each client only
+	-- shows its own player on the stage anyway (HubCrowd).
+	local spot
+	for _ = 1, 16 do
+		local try = Vector3.new(rngStage:NextNumber(-16, 16), 4, rngStage:NextNumber(-6, 6))
+		local clear = true
+		for _, other in game:GetService("Players"):GetPlayers() do
+			local root = other ~= player and other.Character and other.Character:FindFirstChild("HumanoidRootPart")
+			if root and (root.Position - try).Magnitude < 6 then
+				clear = false
+				break
+			end
+		end
+		spot = try
+		if clear then
+			break
+		end
+	end
 	char:PivotTo(CFrame.lookAt(spot, spot + Vector3.new(0, 0, 1)))
 end
 

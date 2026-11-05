@@ -160,9 +160,9 @@ local function coachTip(s)
 	elseif s.phase == "live" and userBall and s.playState == "dropback" then
 		return TOUCH and "Throw it! Tap the field next to an open receiver (GREEN ring)." or "Throw it! Aim at an open receiver (GREEN ring) with the mouse and CLICK."
 	elseif s.phase == "live" and userBall and s.playState == "air" then
-		return "You're the receiver now - run to the GOLD CIRCLE to catch it!"
+		return TOUCH and "You're the receiver now - run to the GOLD CIRCLE and tap CATCH as it arrives!" or "You're the receiver now - run to the GOLD CIRCLE and press C (or click) as it arrives!"
 	elseif s.phase == "live" and userBall and s.playState == "carry" then
-		return TOUCH and "RUN! Use the joystick to reach the end zone." or "RUN! Use WASD to reach the end zone."
+		return TOUCH and "RUN! Tap JUKE or SPIN right before a tackler gets to you." or "RUN! Press Q to juke or R to spin right before a tackler gets to you."
 	elseif s.phase == "defcall" then
 		return "Now you're on defense. Pick a coverage: MAN COVERAGE is a safe start."
 	elseif s.phase == "presnap" then
@@ -170,7 +170,7 @@ local function coachTip(s)
 	elseif s.phase == "live" and s.playState == "air" then
 		return "Ball's in the air! Run to the GOLD CIRCLE to pick it off."
 	elseif s.phase == "live" and s.playState == "carry" then
-		return "Run into the player with the GOLD outline to tackle him."
+		return TOUCH and "Run at the player with the GOLD outline - tap DIVE TACKLE when you're close!" or "Run at the player with the GOLD outline - press E to dive at him when you're close!"
 	elseif s.phase == "live" then
 		return "Chase the QB or stick with your receiver. You'll jump to whoever is closest when he throws."
 	elseif s.phase == "final" then
@@ -536,6 +536,180 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		MatchAction:FireServer("snap")
 	end
 end)
+
+-- Moves ----------------------------------------------------------------------------------------------
+-- Context buttons like a real football game: what you can do right now, with its key (PC) or a
+-- tap button (phones). The server turns a well-timed move into a ratings bonus (MatchService).
+local MOVES = {
+	juke = { key = Enum.KeyCode.Q, keyText = "Q", label = "JUKE", cd = 1.2 },
+	spin = { key = Enum.KeyCode.R, keyText = "R", label = "SPIN", cd = 1.2 },
+	stiff = { key = Enum.KeyCode.F, keyText = "F", label = "STIFF ARM", cd = 1.2 },
+	dive = { key = Enum.KeyCode.E, keyText = "E", label = "DIVE", cd = 2 },
+	catch = { key = Enum.KeyCode.C, keyText = "C", label = "CATCH", cd = 0.6 },
+	jump = { key = Enum.KeyCode.Space, keyText = "SPACE", label = "JUMP", cd = 1 },
+	block = { key = Enum.KeyCode.X, keyText = "X", label = "BLOCK", cd = 1.2 },
+}
+
+-- the moves that make sense right now
+local function movesFor(s)
+	if not s or s.phase ~= "live" then
+		return {}
+	end
+	if s.playState == "air" then
+		if s.youTarget or s.possession == "cpu" then
+			return { "catch", "jump" }
+		end
+		return {}
+	end
+	if s.youCarry then
+		return { "juke", "spin", "stiff", "dive" }
+	end
+	if s.possession == "cpu" then
+		return { "dive" } -- dive tackle
+	end
+	if not (s.canThrow and s.playState == "dropback") then
+		return { "block" }
+	end
+	return {}
+end
+
+local moveReadyAt = {}
+local jukeSide = 1
+local function flatUnit(v)
+	local f = Vector3.new(v.X, 0, v.Z)
+	return f.Magnitude > 0.01 and f.Unit or Vector3.new(0, 0, -1)
+end
+
+local function doMove(kind)
+	local def = MOVES[kind]
+	local s = state
+	if not def or not table.find(movesFor(s), kind) or os.clock() < (moveReadyAt[kind] or 0) then
+		return
+	end
+	moveReadyAt[kind] = os.clock() + def.cd
+	MatchAction:FireServer("move", kind)
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not root or not hum then
+		return
+	end
+	local look = flatUnit(root.CFrame.LookVector)
+	local right = flatUnit(root.CFrame.RightVector)
+	if kind == "dive" then
+		-- lay out: airborne lunge forward
+		MatchFX.LocalPose("dive", 0.9)
+		hum:ChangeState(Enum.HumanoidStateType.Jumping)
+		root.AssemblyLinearVelocity = look * math.max(hum.WalkSpeed, 14) * 1.7 + Vector3.new(0, 10, 0)
+		task.delay(0.5, function()
+			if hum.Parent then
+				hum:ChangeState(Enum.HumanoidStateType.FallingDown)
+			end
+		end)
+	elseif kind == "juke" then
+		-- a quick sidestep (toward A / D if held, otherwise alternating)
+		local dir = UserInputService:IsKeyDown(Enum.KeyCode.D) and 1 or UserInputService:IsKeyDown(Enum.KeyCode.A) and -1 or jukeSide
+		jukeSide = -dir
+		task.spawn(function()
+			for _ = 1, 8 do
+				if root.Parent then
+					root.CFrame += right * dir * 0.55
+				end
+				RunService.RenderStepped:Wait()
+			end
+		end)
+	elseif kind == "spin" then
+		-- a full spin while you keep running
+		hum.AutoRotate = false
+		task.spawn(function()
+			local steps = 14
+			for _ = 1, steps do
+				if root.Parent then
+					root.CFrame = root.CFrame * CFrame.Angles(0, math.pi * 2 / steps, 0)
+				end
+				RunService.RenderStepped:Wait()
+			end
+			hum.AutoRotate = true
+		end)
+	elseif kind == "stiff" then
+		MatchFX.LocalPose("stiffarm", 0.6)
+	elseif kind == "catch" then
+		MatchFX.LocalPose("catch", 0.6)
+	elseif kind == "jump" then
+		MatchFX.LocalPose("catch", 0.7)
+		hum.UseJumpPower = false
+		hum.JumpHeight = 7.5
+		hum.Jump = true
+		task.delay(0.7, function()
+			if hum.Parent then
+				hum.JumpHeight = 0
+			end
+		end)
+	elseif kind == "block" then
+		MatchFX.LocalPose("block", 0.7)
+	end
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed or not state or state.phase ~= "live" then
+		return
+	end
+	-- QB aiming uses the click; otherwise a click while the ball is in the air is a catch
+	if input.UserInputType == Enum.UserInputType.MouseButton1 and state.playState == "air" then
+		doMove("catch")
+		return
+	end
+	for kind, def in MOVES do
+		if input.KeyCode == def.key then
+			doMove(kind)
+		end
+	end
+end)
+
+-- the move list: bottom-left on PC (key + name), big tap buttons on the right on phones
+local movesPanel = new("Frame", { Name = "Moves", BackgroundTransparency = 1, AnchorPoint = TOUCH and Vector2.new(1, 1) or Vector2.new(0, 1), Position = TOUCH and UDim2.new(1, -20, 1, -110) or UDim2.new(0, 20, 1, -40), Size = UDim2.fromOffset(TOUCH and 130 or 230, 320) }, {
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Vertical, VerticalAlignment = Enum.VerticalAlignment.Bottom, HorizontalAlignment = TOUCH and Enum.HorizontalAlignment.Right or Enum.HorizontalAlignment.Left, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }),
+})
+movesPanel.Parent = gui
+local shownMoves = ""
+local function renderMoves()
+	local list = movesFor(state)
+	local sig = table.concat(list, ",")
+	if sig == shownMoves then
+		return
+	end
+	shownMoves = sig
+	for _, c in movesPanel:GetChildren() do
+		if c:IsA("GuiObject") then
+			c:Destroy()
+		end
+	end
+	for i, kind in list do
+		local def = MOVES[kind]
+		local label = (state and state.possession == "cpu" and kind == "dive") and "DIVE TACKLE" or def.label
+		if TOUCH then
+			UI.button({ name = "Move_" .. kind, kind = kind == "catch" and "gold" or "dark", text = label, size = UDim2.fromOffset(130, 58), order = i, textSize = 14, z = 5 }, function()
+				doMove(kind)
+			end).Parent = movesPanel
+		else
+			local row = new("TextButton", { Name = "Move_" .. kind, AutoButtonColor = false, Text = "", BackgroundColor3 = C.Panel, BackgroundTransparency = 0.25, Size = UDim2.fromOffset(0, 42), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = i, ZIndex = 5 }, {
+				UI.corner(10),
+				UI.stroke(Color3.new(1, 1, 1), 1, 0.75),
+				new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 14) }),
+				new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }),
+			})
+			local key = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(def.keyText == "SPACE" and 62 or 32, 32), LayoutOrder = 1, ZIndex = 6 }, { UI.corner(7) })
+			UI.text({ Text = def.keyText, FontFace = F.Heavy, TextColor3 = C.BG, TextScaled = false, TextSize = 15, Size = UDim2.fromScale(1, 1), ZIndex = 7 }).Parent = key
+			key.Parent = row
+			UI.text({ Text = label, FontFace = F.Display, TextScaled = false, TextSize = 20, Size = UDim2.fromOffset(0, 32), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = 2, ZIndex = 6 }).Parent = row
+			row.Activated:Connect(function()
+				doMove(kind)
+			end)
+			row.Parent = movesPanel
+		end
+	end
+end
+RunService.Heartbeat:Connect(renderMoves)
 
 -- Your speed: the server sends top speed / build-up / slowdowns as attributes on your character;
 -- set WalkSpeed from them every frame (smooth, no network traffic per frame)

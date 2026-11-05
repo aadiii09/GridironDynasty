@@ -156,38 +156,47 @@ local function addHelmet(model, primary, secondary)
 	end
 end
 
+-- Jersey over shoulder pads: a jersey shell a touch bigger than the torso (the numbers go on it),
+-- rounded pads on the shoulders, a collar, sleeve stripes. Built to the torso's own size, so it
+-- fits any avatar body.
 local function addPads(model, primary, secondary)
 	local torso = model:FindFirstChild("UpperTorso")
 	if not torso then
 		return
 	end
-	local mesh = artMesh("Pads")
-	if mesh then
-		-- AI pads + jersey shell: stretched over the upper torso in the team color
-		paint(mesh, primary)
-		mesh.Material = Enum.Material.Fabric
-		mesh.Size = Vector3.new(torso.Size.X * 1.32, torso.Size.Y * 1.25, torso.Size.Z * 1.45)
-		weldTo(mesh, torso, CFrame.new(0, torso.Size.Y * 0.12, 0))
-		mesh.Name = "Pads"
-		return mesh
-	end
-	local w = torso.Size.X
+	local s = torso.Size
+	local shell = weldTo(newPart({ Name = "Pads", Size = Vector3.new(s.X * 1.1, s.Y * 0.98, s.Z * 1.3), Color = primary, Material = Enum.Material.Fabric }), torso, CFrame.new(0, s.Y * 0.03, 0))
 	for _, sx in { -1, 1 } do
-		weldTo(newPart({ Name = "Pad", Shape = Enum.PartType.Cylinder, Size = Vector3.new(w * 0.5, 1.0, 1.15), Color = primary }), torso, CFrame.new(sx * w * 0.42, torso.Size.Y * 0.36, 0) * CFrame.Angles(0, 0, math.rad(90 + sx * 12)))
+		-- a rounded pad on top of each shoulder, running front to back
+		weldTo(newPart({ Name = "ShoulderPad", Shape = Enum.PartType.Cylinder, Size = Vector3.new(s.Z * 1.42, s.X * 0.4, s.X * 0.4), Color = primary, Material = Enum.Material.Fabric }), torso, CFrame.new(sx * s.X * 0.36, s.Y * 0.42, 0) * CFrame.Angles(0, math.rad(90), 0))
 	end
-	weldTo(newPart({ Name = "PadTop", Size = Vector3.new(w * 0.9, 0.3, torso.Size.Z * 1.12), Color = primary }), torso, CFrame.new(0, torso.Size.Y * 0.47, 0))
-	-- sleeve stripes
+	-- V collar, front and back
+	for _, z in { -1, 1 } do
+		weldTo(newPart({ Name = "Collar", Size = Vector3.new(s.X * 0.36, s.Y * 0.07, 0.05), Color = secondary }), torso, CFrame.new(0, s.Y * 0.46, z * s.Z * 0.66))
+	end
+	-- sleeves: two stripes near the cuff
 	for _, armName in { "LeftUpperArm", "RightUpperArm" } do
 		local arm = model:FindFirstChild(armName)
 		if arm then
-			weldTo(newPart({ Name = "SleeveStripe", Size = arm.Size * Vector3.new(1.04, 0.16, 1.04), Color = secondary }), arm, CFrame.new(0, -arm.Size.Y * 0.32, 0))
+			for _, y in { -0.26, -0.38 } do
+				weldTo(newPart({ Name = "SleeveStripe", Size = arm.Size * Vector3.new(1.05, 0.07, 1.05), Color = secondary, Material = Enum.Material.Fabric }), arm, CFrame.new(0, arm.Size.Y * y, 0))
+			end
 		end
 	end
+	-- pants stripe down each leg
+	for _, legName in { "LeftUpperLeg", "RightUpperLeg" } do
+		local leg = model:FindFirstChild(legName)
+		if leg then
+			local side = legName:find("Left") and -1 or 1
+			weldTo(newPart({ Name = "PantsStripe", Size = Vector3.new(0.06, leg.Size.Y * 0.96, leg.Size.Z * 0.22), Color = primary }), leg, CFrame.new(side * leg.Size.X * 0.51, 0, 0))
+		end
+	end
+	return shell
 end
 
 local function addNumbers(model, number, lastName, primary, secondary)
 	-- on the pads shell when present (it covers the torso), otherwise on the torso
-	local torso = model:FindFirstChild("Pads") or model:FindFirstChild("UpperTorso")
+	local torso = model:FindFirstChild("Pads", true) or model:FindFirstChild("UpperTorso")
 	if not torso then
 		return
 	end
@@ -210,8 +219,8 @@ local function addNumbers(model, number, lastName, primary, secondary)
 		end
 		local num = Instance.new("TextLabel")
 		num.BackgroundTransparency = 1
-		num.Size = UDim2.fromScale(1, showName and 0.66 or 0.7)
-		num.Position = UDim2.fromScale(0, showName and 0.27 or 0.2)
+		num.Size = UDim2.fromScale(0.9, showName and 0.68 or 0.78)
+		num.Position = UDim2.fromScale(0.05, showName and 0.27 or 0.14)
 		num.FontFace = FONT_NUM
 		num.TextScaled = true
 		num.TextColor3 = secondary
@@ -226,7 +235,7 @@ local function addNumbers(model, number, lastName, primary, secondary)
 end
 
 -- Paint body parts as a uniform
-local function dress(model, primary, secondary, skin)
+local function dress(model, primary, secondary, skin, keepHead)
 	local colors = {
 		Head = skin,
 		UpperTorso = primary,
@@ -238,6 +247,9 @@ local function dress(model, primary, secondary, skin)
 		LeftLowerLeg = secondary, RightLowerLeg = secondary,
 		LeftFoot = CLEATS, RightFoot = CLEATS,
 	}
+	if keepHead then
+		colors.Head = nil
+	end
 	for name, color in colors do
 		local p = model:FindFirstChild(name)
 		if p then
@@ -281,11 +293,41 @@ function Npc.SetCollisionGroup(model)
 	end
 end
 
--- Helmet + pads on the player's own avatar during a game (removed afterwards)
-function Npc.Equip(character, primary, secondary, jersey)
+-- A player's own avatar in full uniform (the hub and every game): team jersey with their name
+-- and number, pads, helmet, pants, socks, gloves, cleats. Their clothes, body colors and
+-- accessories are put away in StoredLook and come back with Unequip.
+local BODY_PARTS = { "UpperTorso", "LowerTorso", "LeftUpperArm", "RightUpperArm", "LeftLowerArm", "RightLowerArm", "LeftHand", "RightHand", "LeftUpperLeg", "RightUpperLeg", "LeftLowerLeg", "RightLowerLeg", "LeftFoot", "RightFoot" }
+
+local function numberFor(character)
+	local p = Players:GetPlayerFromCharacter(character)
+	local id = p and p.UserId or 0
+	return (math.abs(id) % 98) + 1, p and p.DisplayName or ""
+end
+
+function Npc.Equip(character, primary, secondary, jersey, number, name)
 	local gear = Instance.new("Folder")
 	gear.Name = "MatchGear"
 	gear.Parent = character
+	-- put the avatar's own look away
+	local stored = character:FindFirstChild("StoredLook") or Instance.new("Folder")
+	stored.Name = "StoredLook"
+	stored.Parent = character
+	for _, d in character:GetChildren() do
+		if d:IsA("Clothing") or d:IsA("ShirtGraphic") or d:IsA("BodyColors") then
+			d.Parent = stored
+		end
+	end
+	for _, partName in BODY_PARTS do
+		local p = character:FindFirstChild(partName)
+		if p and p:IsA("BasePart") and p:GetAttribute("OrigColor") == nil then
+			p:SetAttribute("OrigColor", p.Color)
+			p:SetAttribute("OrigMaterial", p.Material.Name)
+		end
+	end
+	-- skin from their own arms (the head keeps its face and color)
+	local arm = character:FindFirstChild("LeftLowerArm")
+	local skin = arm and (arm:GetAttribute("OrigColor") or arm.Color) or SKINS[2]
+	dress(character, primary, secondary, skin, true)
 	local before = {}
 	for _, d in character:GetChildren() do
 		before[d] = true
@@ -297,15 +339,17 @@ function Npc.Equip(character, primary, secondary, jersey)
 			d.Parent = gear
 		end
 	end
-	applyJersey(gear, primary, jersey)
+	local defNumber, defName = numberFor(character)
+	addNumbers(gear, number or defNumber, name or defName, primary, secondary)
+	applyJersey(character, primary, jersey)
+	-- every accessory hides (hats and hair under the helmet, the rest under the uniform)
 	for _, acc in character:GetChildren() do
 		if acc:IsA("Accessory") then
 			local handle = acc:FindFirstChild("Handle")
-			local att = handle and handle:FindFirstChildOfClass("Attachment")
-			if att and (att.Name:find("Hat") or att.Name:find("Hair") or att.Name:find("Face")) then
+			if handle and not handle:GetAttribute("HiddenByGear") then
 				handle.LocalTransparencyModifier = 0
-				handle.Transparency = 1 -- hide hats/hair under the helmet
-				handle:SetAttribute("HiddenByGear", true)
+				handle:SetAttribute("HiddenByGear", handle.Transparency)
+				handle.Transparency = 1
 			end
 		end
 	end
@@ -318,10 +362,31 @@ function Npc.Unequip(character)
 		gear:Destroy()
 	end
 	for _, d in character:GetDescendants() do
-		if d:IsA("BasePart") and d:GetAttribute("HiddenByGear") then
-			d.Transparency = 0
-			d:SetAttribute("HiddenByGear", nil)
+		if d:IsA("BasePart") then
+			local hidden = d:GetAttribute("HiddenByGear")
+			if hidden ~= nil then
+				d.Transparency = type(hidden) == "number" and hidden or 0
+				d:SetAttribute("HiddenByGear", nil)
+			end
+			local color = d:GetAttribute("OrigColor")
+			if color then
+				d.Color = color
+				d.Material = Enum.Material[d:GetAttribute("OrigMaterial") or "Plastic"]
+				d:SetAttribute("OrigColor", nil)
+				d:SetAttribute("OrigMaterial", nil)
+			end
+			d:SetAttribute("JerseyPrimary", nil)
 		end
+	end
+	CollectionService:RemoveTag(character, "JerseyFx")
+	character:SetAttribute("JerseyId", nil)
+	-- their own clothes and body colors back on
+	local stored = character:FindFirstChild("StoredLook")
+	if stored then
+		for _, d in stored:GetChildren() do
+			d.Parent = character
+		end
+		stored:Destroy()
 	end
 end
 
