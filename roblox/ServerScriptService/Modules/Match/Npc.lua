@@ -75,9 +75,10 @@ local function weldTo(part, target, offset)
 	part.CanQuery = false
 	part.Massless = true
 	part.CFrame = target.CFrame * offset
-	local w = Instance.new("WeldConstraint")
+	local w = Instance.new("Weld")
 	w.Part0 = target
 	w.Part1 = part
+	w.C0 = offset
 	w.Parent = part
 	part.Parent = target.Parent
 	return part
@@ -475,6 +476,10 @@ function Npc:Hide(hidden)
 	self.root.Anchored = hidden
 	if hidden then
 		self.model:PivotTo(self.model:GetPivot() - Vector3.new(0, 40, 0))
+	elseif self.root:IsDescendantOf(workspace) then
+		-- unanchoring resets the network owner to automatic (the nearest player's client would
+		-- run his physics, and anything welded to him drifts): keep him on the server
+		pcall(self.root.SetNetworkOwner, self.root, nil)
 	end
 end
 

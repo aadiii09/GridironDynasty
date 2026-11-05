@@ -618,10 +618,13 @@ local function tagTargets(m)
 			ring.CanQuery = false
 			ring.Massless = true
 			ring.CastShadow = false
-			ring.CFrame = CFrame.new(unit.root.Position - Vector3.new(0, unit.humanoid.HipHeight + unit.root.Size.Y / 2 - 0.1, 0)) * CFrame.Angles(0, 0, math.rad(90))
-			local weld = Instance.new("WeldConstraint")
+			-- a Weld with the offset spelled out, so the ring sits at his feet on every screen
+			local below = CFrame.new(0, -(unit.humanoid.HipHeight + unit.root.Size.Y / 2 - 0.1), 0)
+			ring.CFrame = CFrame.new(unit.root.Position) * below * CFrame.Angles(0, 0, math.rad(90))
+			local weld = Instance.new("Weld")
 			weld.Part0 = unit.root
 			weld.Part1 = ring
+			weld.C0 = unit.root.CFrame:Inverse() * ring.CFrame
 			weld.Parent = ring
 			ring:AddTag("TargetRing")
 			ring.Parent = unit.model
@@ -685,9 +688,10 @@ local function makeBall()
 		m.CanCollide = false
 		m.CanTouch = false
 		m.CFrame = CFrame.Angles(0, math.rad(90), 0)
-		local w = Instance.new("WeldConstraint")
+		local w = Instance.new("Weld")
 		w.Part0 = ball
 		w.Part1 = m
+		w.C0 = CFrame.Angles(0, math.rad(90), 0)
 		w.Parent = m
 		m.Parent = ball
 	else
@@ -754,13 +758,24 @@ function holdBall(m, holder)
 	if not hand then
 		return
 	end
-	m.ball.CFrame = hand.CFrame * CFrame.new(0, -0.35, -0.3)
+	-- A Weld with the grip spelled out (C0), not a WeldConstraint: a WeldConstraint keeps whatever
+	-- gap each computer sees between hand and ball when it's made, and the client running the
+	-- carrier's physics may still see him somewhere else - the ball then floats that far away.
+	local grip = CFrame.new(0, -0.35, -0.3)
+	m.ball.CFrame = hand.CFrame * grip
 	m.ball.Anchored = false
-	local w = Instance.new("WeldConstraint")
+	local w = Instance.new("Weld")
+	w.Name = "HoldWeld"
 	w.Part0 = hand
 	w.Part1 = m.ball
+	w.C0 = grip
 	w.Parent = m.ball
 	m.ballWeld = w
+	-- welding the (unanchored, "automatic") ball onto an NPC would hand his physics to the
+	-- nearest player's client: keep NPC carriers on the server (players own their own characters)
+	if holder ~= "avatar" and not (type(holder) == "table" and holder.isAvatar) then
+		pcall(m.ball.SetNetworkOwner, m.ball, nil)
+	end
 end
 
 -- Poses are read by every client (MatchFX) and layered on top of the run/idle animations.

@@ -312,7 +312,7 @@ local function updateLocator()
 	-- outline whoever is holding the ball
 	local holder
 	if live and cpuBall and not air and s.ball then
-		local weld = s.ball:FindFirstChildOfClass("WeldConstraint")
+		local weld = s.ball:FindFirstChild("HoldWeld")
 		local hand = weld and weld.Part0
 		holder = hand and hand:FindFirstAncestorOfClass("Model")
 	end
