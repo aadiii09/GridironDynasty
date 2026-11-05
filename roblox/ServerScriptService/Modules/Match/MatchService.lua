@@ -419,6 +419,8 @@ local function stateFor(m, viewer, side, message, color)
 		throwReach = offense and m.units.Offense.QB and ((18 + m.units.Offense.QB.attrs.THP * 0.35) * Y * 1.3) or nil,
 		canSwitch = not offense and not m.custom,
 		youCarry = youCarry,
+		-- the ball in the air is coming to the receiver this viewer plays (catch assist on his client)
+		youTarget = m.play ~= nil and m.play.state == "air" and m.play.air ~= nil and type(m.play.air.target) == "table" and m.play.air.target.isProxy == true and m.play.air.target.player == viewer,
 		waitingFor = waitingFor,
 		yourTeam = m.custom and { name = teamName(m, side), primary = m[side].team.primary } or nil,
 		defModels = defModels,
@@ -1369,7 +1371,7 @@ local function resolveCatch(m)
 		end
 	end
 	-- spectacular catchers get to throws other receivers can't
-	local reach = 3.6 + (r.SPC - 50) * 0.035
+	local reach = 3.6 + (r.SPC - 50) * 0.035 + (rcv.isAvatar and 1.2 or 0) -- a player-controlled receiver gets a little help
 	if rcvDist <= reach then
 		local breakup = (me and meDist < 4.5) and 0.3 or 0
 		local pCatch = 0.58 + r.CTH * 0.0042
@@ -1754,7 +1756,7 @@ end
 
 -- The ball leaves the QB's hand toward `aim`. His ratings decide how close it lands: SAC / MAC /
 -- DAC by distance, THP range, RUN on the move, TUP under pressure. rcv = the receiver going for it.
-local function launch(m, aim, rcv)
+local function launch(m, aim, rcv, minFlight)
 	local play = m.play
 	local from = carrierPos(m)
 	if not from then
@@ -1802,7 +1804,7 @@ local function launch(m, aim, rcv)
 	play.air = {
 		from = from + Vector3.new(0, 1.5, 0),
 		to = Vector3.new(to.X, from.Y, to.Z),
-		T = flight / ballSpeed + 0.05,
+		T = math.max(flight / ballSpeed + 0.05, minFlight or 0),
 		t0 = os.clock(),
 		startedAt = workspace:GetServerTimeNow(), -- clients draw the flight from this
 		h = math.clamp(flight * 0.18, 3, 26),
@@ -1904,7 +1906,7 @@ local function userThrowAt(m, player, point)
 			end
 		end
 	end
-	launch(m, aim, rcv)
+	launch(m, aim, rcv, 0.6) -- aimed throws hang at least 0.6s so the receiver you take over can get there
 	if rcv and offHuman(m) == player and play.state == "air" then
 		play.air.target = takeOver(m, rcv.slot)
 		sendState(m)

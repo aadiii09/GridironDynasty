@@ -74,7 +74,7 @@ local function targetCFrame(dt)
 	if not live then
 		-- lined up (calling the play, pre-snap, between plays)
 		local h = steer(face, dt, 6)
-		return CFrame.lookAt(p - h * 15 + UP * 8.5, p + h * 18 + UP), 6
+		return CFrame.lookAt(p - h * 16 + UP * 11, p + h * 18 + UP), 6
 	end
 
 	if live == "dropback" and s.canThrow then
@@ -84,7 +84,7 @@ local function targetCFrame(dt)
 			look = look:Lerp(MatchCamera.AimPoint, 0.45)
 		end
 		local h = steer(look - p, dt, 4)
-		return CFrame.lookAt(p - h * 13 + UP * 10, look), 6
+		return CFrame.lookAt(p - h * 13 + UP * 12.5, look), 6
 	end
 
 	if live == "air" and s.air then

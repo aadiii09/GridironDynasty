@@ -225,7 +225,7 @@ UI.button({ kind = "primary", text = "BACK TO LOBBY", size = UDim2.new(1, -60, 0
 end).Parent = finalPanel
 
 -- play clock (head-to-head): seconds left to call / snap ------------------------------------
-local clockLabel = UI.text({ Name = "PlayClock", Text = "", FontFace = F.Number, TextScaled = false, TextSize = 30, TextStrokeTransparency = 0.4, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 232), Size = UDim2.fromOffset(120, 34), Visible = false })
+local clockLabel = UI.text({ Name = "PlayClock", Text = "", FontFace = F.Number, TextScaled = false, TextSize = 30, TextStrokeTransparency = 0.4, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 152), Size = UDim2.fromOffset(120, 34), Visible = false })
 clockLabel.Parent = gui
 RunService.Heartbeat:Connect(function()
 	local s = state
@@ -646,6 +646,33 @@ RunService.RenderStepped:Connect(function()
 	aimInner.CFrame = flatCF + Vector3.new(0, 0.02, 0)
 	aimOuter.Parent = workspace.CurrentCamera
 	aimInner.Parent = workspace.CurrentCamera
+end)
+
+-- Catch assist: the ball is coming to the receiver you play and you're not steering - run to the
+-- gold circle (any movement input takes over). Short throws land before anyone can react otherwise.
+local MOVE_KEYS = { Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D, Enum.KeyCode.Up, Enum.KeyCode.Down, Enum.KeyCode.Left, Enum.KeyCode.Right }
+local lastSteer = 0
+UserInputService.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.Touch or input.KeyCode == Enum.KeyCode.Thumbstick1 then
+		lastSteer = os.clock()
+	end
+end)
+local lastAssist = 0
+RunService.Heartbeat:Connect(function()
+	local s = state
+	if not s or not s.youTarget or not s.air or s.phase ~= "live" or s.playState ~= "air" then
+		return
+	end
+	for _, k in MOVE_KEYS do
+		if UserInputService:IsKeyDown(k) then
+			lastSteer = os.clock()
+		end
+	end
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hum and os.clock() - lastSteer > 0.25 and os.clock() - lastAssist > 0.1 then
+		lastAssist = os.clock()
+		hum:MoveTo(s.air.to)
+	end
 end)
 
 UserInputService.InputBegan:Connect(function(input, processed)
