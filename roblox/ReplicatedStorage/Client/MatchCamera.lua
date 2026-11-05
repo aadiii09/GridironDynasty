@@ -5,7 +5,10 @@
 --   You have the ball: a chase cam that turns with you.
 --   Anyone else on offense (blocking, running a route): behind you, keeping the ball in view.
 --   On defense: always behind you looking straight at the offense; it never swings to follow the
---   ball, so your controls stay the same all play.
+--   ball, so your controls stay the same all play. Once the ball is thrown or caught it rises
+--   and pulls back (still facing the same way) so you can see the catch even behind you, the
+--   ball carrier glows through other players, and an arrow at the screen edge points to him if
+--   he's still out of view.
 -- Everything is smoothed (position and the direction it looks), so switching players or a new
 -- play never cuts hard; big jumps (a new line of scrimmage) snap.
 -- Driven by MatchUI: MatchCamera.Update(state) on every server state, Stop() when the game ends.
@@ -28,6 +31,8 @@ local smooth = nil -- the camera's smoothed CFrame (shake is added on top, never
 local heading = nil -- smoothed flat direction the camera looks along
 local shakeAmp, shakeUntil, shakeLength = 0, 0, 0
 local SNAP_DISTANCE = 70 -- a target this far away (new play, new possession) cuts instead of flying
+local MAX_FRAME = 72 -- on defense the camera pulls back for a ball carrier up to this far away (studs)
+local YARD = require(ReplicatedStorage.Shared.MatchConfig).Yard
 
 local function flat(v)
 	return Vector3.new(v.X, 0, v.Z)
@@ -90,8 +95,22 @@ local function targetCFrame(dt)
 	end
 
 	if not userBall then
-		-- defense: a steady view behind you facing the offense (it does not chase the ball)
+		-- defense: the camera never turns (so your controls never flip), but once the ball is thrown
+		-- or caught it rises and pulls back to keep you AND the ball / carrier in the picture,
+		-- even when the catch is behind you or off to the side
 		local h = steer(face, dt, 5)
+		local target = (live == "air" and s.air and s.air.to) or (live == "carry" and ballPos) or nil
+		if target then
+			local d = flat(target - p)
+			local along = d:Dot(h) -- + = in front of you (the normal view already sees that way)
+			local side = (d - h * along).Magnitude
+			local behind = math.max(0, -along)
+			local need = math.min(MAX_FRAME, math.sqrt(behind * behind + (side * 0.8) ^ 2) + math.max(0, along) * 0.25)
+			local k = math.clamp(need / 25, 0, 1)
+			local focus = p:Lerp(Vector3.new(target.X, p.Y, target.Z), (along >= 0 and 0.3 or 0.5) * k)
+			local look = (p + h * 16):Lerp(focus, k) + UP
+			return CFrame.lookAt(focus - h * (15 + need * 0.45) + UP * (9 + need * 0.6), look), 5
+		end
 		return CFrame.lookAt(p - h * 15 + UP * 9, p + h * 16 + UP), 6
 	end
 
@@ -118,6 +137,120 @@ local function targetCFrame(dt)
 	return CFrame.lookAt(p - h * 14 + UP * 8, p:Lerp(ballPos, 0.35) + UP), 6
 end
 
+-- Defense: find the ball carrier (the ball is welded to his hand), make him glow through other
+-- players, and point an arrow at him from the screen edge when he's out of view.
+local glow, arrowGui, arrow, arrowText = nil, nil, nil, nil
+
+local function buildArrow()
+	arrowGui = Instance.new("ScreenGui")
+	arrowGui.Name = "CarrierArrow"
+	arrowGui.ResetOnSpawn = false
+	arrowGui.IgnoreGuiInset = true
+	arrowGui.DisplayOrder = 5
+	arrowGui.Enabled = false
+	-- a chevron made of two bars, pointing up; the holder turns it toward the carrier
+	arrow = Instance.new("Frame")
+	arrow.AnchorPoint = Vector2.new(0.5, 0.5)
+	arrow.Size = UDim2.fromOffset(44, 44)
+	arrow.BackgroundTransparency = 1
+	arrow.Parent = arrowGui
+	for _, sign in { -1, 1 } do
+		local bar = Instance.new("Frame")
+		bar.AnchorPoint = Vector2.new(0.5, 0.5)
+		bar.Size = UDim2.fromOffset(26, 7)
+		bar.Position = UDim2.new(0.5, sign * 8, 0.5, -2)
+		bar.Rotation = sign * 40
+		bar.BackgroundColor3 = Color3.fromRGB(255, 70, 60)
+		bar.BorderSizePixel = 0
+		local c = Instance.new("UICorner")
+		c.CornerRadius = UDim.new(1, 0)
+		c.Parent = bar
+		local st = Instance.new("UIStroke")
+		st.Thickness = 2
+		st.Color = Color3.fromRGB(20, 10, 10)
+		st.Parent = bar
+		bar.Parent = arrow
+	end
+	arrowText = Instance.new("TextLabel")
+	arrowText.AnchorPoint = Vector2.new(0.5, 0.5)
+	arrowText.Size = UDim2.fromOffset(70, 22)
+	arrowText.BackgroundColor3 = Color3.fromRGB(20, 10, 10)
+	arrowText.BackgroundTransparency = 0.25
+	arrowText.Font = Enum.Font.GothamBlack
+	arrowText.TextSize = 14
+	arrowText.TextColor3 = Color3.fromRGB(255, 255, 255)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 6)
+	c.Parent = arrowText
+	arrowText.Parent = arrowGui
+	arrowGui.Parent = player:WaitForChild("PlayerGui")
+end
+
+local function clearCarrier()
+	if glow then
+		glow:Destroy()
+		glow = nil
+	end
+	if arrowGui then
+		arrowGui.Enabled = false
+	end
+end
+
+local function trackCarrier(cam)
+	local s = state
+	local ball = s and s.possession ~= "user" and s.phase == "live" and s.playState == "carry" and s.ball
+	local weld = ball and ball.Parent and ball:FindFirstChild("HoldWeld")
+	local hand = weld and weld.Part0
+	local model = hand and hand:FindFirstAncestorOfClass("Model")
+	if not model or model == player.Character then
+		clearCarrier()
+		return
+	end
+	if not glow or glow.Parent ~= model then
+		if glow then
+			glow:Destroy()
+		end
+		glow = Instance.new("Highlight")
+		glow.Name = "CarrierGlow"
+		glow.FillColor = Color3.fromRGB(255, 70, 60)
+		glow.FillTransparency = 0.7
+		glow.OutlineColor = Color3.fromRGB(255, 220, 90)
+		glow.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		glow.Parent = model
+	end
+	if not arrowGui or not arrowGui.Parent then
+		buildArrow()
+	end
+	local pos = (model:FindFirstChild("HumanoidRootPart") or hand).Position
+	local vp = cam.ViewportSize
+	local sp, onScreen = cam:WorldToViewportPoint(pos)
+	local margin = 50
+	if onScreen and sp.X > margin and sp.X < vp.X - margin and sp.Y > margin and sp.Y < vp.Y - margin then
+		arrowGui.Enabled = false
+		return
+	end
+	-- direction from the screen centre (flipped when he's behind the camera), pinned to the edge
+	local c = vp / 2
+	local dir = Vector2.new(sp.X, sp.Y) - c
+	if sp.Z < 0 then
+		dir = -dir
+	end
+	if dir.Magnitude < 1 then
+		dir = Vector2.new(0, 1)
+	end
+	local edge = c - Vector2.new(margin + 10, margin + 10)
+	local scale = math.min(edge.X / math.max(math.abs(dir.X), 1e-3), edge.Y / math.max(math.abs(dir.Y), 1e-3))
+	local at = c + dir * scale
+	arrow.Position = UDim2.fromOffset(at.X, at.Y)
+	arrow.Rotation = math.deg(math.atan2(dir.Y, dir.X)) + 90
+	local back = at - dir.Unit * 40
+	arrowText.Position = UDim2.fromOffset(back.X, back.Y)
+	local root = avatarRoot()
+	local yards = root and math.floor(flat(pos - root.Position).Magnitude / YARD + 0.5) or 0
+	arrowText.Text = yards .. " YD"
+	arrowGui.Enabled = true
+end
+
 local function step(dt)
 	if not active then
 		return
@@ -142,6 +275,7 @@ local function step(dt)
 	end
 	cam.CFrame = smooth * shake
 	cam.FieldOfView = 70
+	trackCarrier(cam)
 end
 
 -- A quick jolt for big hits (off in Settings -> CAMERA SHAKE)
@@ -172,6 +306,7 @@ function MatchCamera.Stop()
 	state = nil
 	smooth = nil
 	heading = nil
+	clearCarrier()
 	shakeUntil = 0
 	MatchCamera.AimPoint = nil
 	local cam = workspace.CurrentCamera
