@@ -264,7 +264,7 @@ local playGlow = UI.stroke(C.Accent, 3, 0.2)
 playGlow.Parent = playButton
 TweenService:Create(playGlow, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Transparency = 0.85, Thickness = 7 }):Play()
 UI.shine(playButton, 3)
-UI.text({ Text = "VS CPU  -  RANKED  -  FRIENDLY", FontFace = F.Display, TextColor3 = Color3.fromRGB(8, 60, 34), TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 1, -22), ZIndex = 2 }).Parent = playButton
+UI.text({ Text = "VS CPU  -  RANKED  -  FRIENDS", FontFace = F.Display, TextColor3 = Color3.fromRGB(8, 60, 34), TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 1, -22), ZIndex = 2 }).Parent = playButton
 
 -- shrink the dock on narrow (phone) screens
 local function fitDock()
@@ -2246,7 +2246,7 @@ end
 -- =========================================================================================
 -- PLAY menu: VS CPU (difficulty) | RANKED (head-to-head queue) | FRIENDLY (challenge a player)
 -- =========================================================================================
-local diffModal = UI.glass({ Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(860, 460), ZIndex = 70 })
+local diffModal = UI.glass({ Name = "PlayMenu", Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(860, 460), ZIndex = 70 })
 diffModal.Parent = gui
 local playTab = "cpu"
 local h2hState = { searching = false, count = 0, since = 0 }
@@ -2297,7 +2297,7 @@ local function renderCpuTab(body)
 	local myOvr = teamRatings().ovr
 	UI.text({ Text = ("YOUR TEAM: %d OVR  -  EVERY WIN COUNTS FOR JERSEYS AND THE LEADERBOARD"):format(myOvr), FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 14, Size = UDim2.new(1, 0, 0, 20), Position = UDim2.fromOffset(0, 0), ZIndex = 71 }).Parent = body
 	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 290), Position = UDim2.fromOffset(0, 30), ZIndex = 71 }, {
-		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, Padding = UDim.new(0, 12) }),
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder }),
 	})
 	row.Parent = body
 	local last = state.difficulty or MatchConfig.DefaultDifficulty
@@ -2415,23 +2415,25 @@ function openDifficulty(tab)
 	UI.corner(14).Parent = diffModal
 	UI.stroke(C.Accent, 2).Parent = diffModal
 	UI.text({ Text = "PLAY", FontFace = F.Display, TextScaled = false, TextSize = 36, Size = UDim2.fromOffset(120, 44), Position = UDim2.fromOffset(24, 14), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 71 }).Parent = diffModal
-	local tabs = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(560, 44), Position = UDim2.fromOffset(130, 16), ZIndex = 71 }, {
-		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8) }),
+	local tabs = new("Frame", { Name = "Tabs", BackgroundTransparency = 1, Size = UDim2.fromOffset(640, 44), Position = UDim2.fromOffset(130, 16), ZIndex = 71 }, {
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }),
 	})
 	tabs.Parent = diffModal
-	for _, t in { { "cpu", "VS CPU", "primary" }, { "ranked", "RANKED", "gold" }, { "friendly", "FRIENDLY", "blue" } } do
-		UI.button({ kind = playTab == t[1] and t[3] or "dark", text = t[2], size = UDim2.fromOffset(150, 42), textSize = 17, z = 72 }, function()
+	for i, t in { { "cpu", "VS CPU", "primary" }, { "ranked", "RANKED", "gold" }, { "friendly", "FRIENDLY", "blue" }, { "custom", "CUSTOM 7v7", "purple" } } do
+		UI.button({ name = "Tab_" .. t[1], kind = playTab == t[1] and t[3] or "dark", text = t[2], size = UDim2.fromOffset(150, 42), order = i, textSize = 17, z = 72 }, function()
 			openDifficulty(t[1])
 		end).Parent = tabs
 	end
 	UI.button({ kind = "dark", icon = "close", size = UDim2.fromOffset(44, 40), position = UDim2.new(1, -58, 0, 14), z = 72 }, function()
 		diffModal.Visible = false
 	end).Parent = diffModal
-	local body = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -40, 0, 330), Position = UDim2.fromOffset(20, 84), ZIndex = 71 })
+	local body = new("Frame", { Name = "Body", BackgroundTransparency = 1, Size = UDim2.new(1, -40, 0, 330), Position = UDim2.fromOffset(20, 84), ZIndex = 71 })
 	body.Parent = diffModal
 	diffModal.Visible = true
 	if playTab == "cpu" then
 		renderCpuTab(body)
+	elseif playTab == "custom" then
+		require(ReplicatedStorage.Client.CustomLobbyUI).Render(body)
 	else
 		local info = Remotes.GetH2HInfo:InvokeServer()
 		if not diffModal.Visible or body.Parent == nil then
@@ -2975,6 +2977,20 @@ fitter.changed:Connect(function()
 	fitDock()
 	fitHub()
 end)
+require(ReplicatedStorage.Client.CustomLobbyUI).Init({
+	parent = fitter.root,
+	menu = diffModal,
+	toast = toast,
+	open = function()
+		closePanels()
+		openDifficulty("custom")
+	end,
+	refresh = function()
+		if diffModal.Visible and playTab == "custom" then
+			openDifficulty("custom")
+		end
+	end,
+})
 fitDock()
 fitHub()
 task.spawn(function()

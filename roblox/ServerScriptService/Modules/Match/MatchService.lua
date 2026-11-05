@@ -2,6 +2,8 @@
 -- played by a human or by the AI:
 --   vs CPU:       side A = you, side B = AI team
 --   head-to-head: side A and side B are both players (ranked or friendly)
+--   custom:       friends' 7v7 - up to 7 players a team, each at the offensive and defensive spot
+--                 they picked (a "proxy" unit stands in for each one); the rest is AI. No rewards.
 --
 -- Human offense: pick a play, snap, throw (keys 1-4) or hand off; after a catch/handoff your
 --   avatar takes over the ball carrier.
@@ -110,12 +112,49 @@ local function defHuman(m) -- the player on defense right now (nil = AI defense)
 end
 
 local function sideOf(m, player)
-	for side, p in m.humans do
-		if p == player then
-			return side
+	return m.viewers[player]
+end
+
+-- Who calls the play for a side right now: the side's human (vs CPU / head-to-head); in custom
+-- games the QB on offense, otherwise the team captain (first player on it). nil = the AI calls.
+local function callerFor(m, side)
+	if not m.custom then
+		return m.humans[side]
+	end
+	if side == m.possession and m.units then
+		local qb = m.units.Offense.QB
+		if qb and qb.isProxy then
+			return qb.player
+		end
+	end
+	for _, p in m.order do
+		local c = m.ctrl[p]
+		if c and c.side == side then
+			return p
 		end
 	end
 	return nil
+end
+
+-- Is this player the quarterback right now?
+local function isQbPlayer(m, player)
+	if not m.custom then
+		return offHuman(m) == player
+	end
+	local qb = m.units and m.units.Offense.QB
+	return qb ~= nil and qb.isProxy == true and qb.player == player
+end
+
+-- Who may snap: the offense (its caller in custom games), or the defense when the AI has the ball
+local function canSnapFor(m, player, side)
+	if not m.custom then
+		return side == m.possession or not offHuman(m)
+	end
+	local offCaller = callerFor(m, m.possession)
+	if offCaller then
+		return player == offCaller
+	end
+	return player == callerFor(m, other(m.possession))
 end
 
 local function fire(player, payload)
@@ -272,7 +311,7 @@ local function callout(m, unit, text, tone)
 	if not model then
 		return
 	end
-	for side, p in m.humans do
+	for p, side in m.viewers do
 		local c = colorFor(m, side, tone) or Color3.new(1, 1, 1)
 		fire(p, { event = "callout", model = model, text = text, color = c:ToHex() })
 	end
@@ -312,16 +351,41 @@ local function stateFor(m, viewer, side, message, color)
 		end
 	end
 	local controlled = not offense and m.avatarUnit and m.avatarUnit.player == viewer and m.units.Defense[m.controlSlot]
+	local ctrl = m.custom and m.ctrl[viewer]
+	if ctrl then
+		controlled = offense and m.units.Offense[ctrl.off] or (not offense and m.units.Defense[ctrl.def])
+	end
 	-- field position from this viewer's point of view
 	local yourYards = offense and m.los / Y or MatchConfig.FieldYards - m.los / Y
 	local phase = m.phase
+	local mineCalled = (offense and m.call ~= nil) or (not offense and m.defCall ~= nil)
 	if phase == "calls" then
-		if offense then
-			phase = m.call and "waiting" or "playcall"
+		if mineCalled or (m.custom and callerFor(m, side) ~= viewer) then
+			phase = "waiting"
 		else
-			phase = m.defCall and "waiting" or "defcall"
+			phase = offense and "playcall" or "defcall"
 		end
 	end
+	-- who we're waiting on to call
+	local pendingSide = mineCalled and opp or side
+	local pendingCaller = callerFor(m, pendingSide)
+	local waitingFor = pendingCaller and (pendingCaller == viewer and "you" or pendingCaller.DisplayName) or teamName(m, pendingSide)
+	-- the defenders' models (offense colors receivers open / covered from these)
+	local defModels
+	if offense then
+		defModels = {}
+		for _, d in m.units.Defense do
+			local model = d.isAvatar and d.player and d.player.Character or d.model
+			if model and not d.hidden then
+				table.insert(defModels, model)
+			end
+		end
+		if m.avatarUnit and m.avatarUnit.player and m.avatarUnit.player.Character then
+			table.insert(defModels, m.avatarUnit.player.Character)
+		end
+	end
+	local carrier = m.play and m.play.carrier
+	local youCarry = (carrier == "avatar" and offense) or (type(carrier) == "table" and carrier.isProxy == true and carrier.player == viewer)
 	local msg = type(message) == "function" and message(viewer, side) or message
 	local col = type(color) == "function" and color(viewer, side) or colorFor(m, side, color)
 	local oppTeam = m[opp].team
@@ -349,8 +413,14 @@ local function stateFor(m, viewer, side, message, color)
 			startedAt = m.play.air.startedAt,
 		} or nil,
 		targets = targets,
-		control = controlled and { slot = m.controlSlot, pos = controlled.card.pos, name = nameOf(controlled, viewer) } or nil,
-		canSnap = m.phase == "presnap" and (offense or not offHuman(m)),
+		control = controlled and { slot = controlled.slot or m.controlSlot, pos = controlled.card.pos, name = nameOf(controlled, viewer) } or nil,
+		canSnap = m.phase == "presnap" and canSnapFor(m, viewer, side),
+		canThrow = offense and (not m.custom or isQbPlayer(m, viewer)),
+		canSwitch = not offense and not m.custom,
+		youCarry = youCarry,
+		waitingFor = waitingFor,
+		yourTeam = m.custom and { name = teamName(m, side), primary = m[side].team.primary } or nil,
+		defModels = defModels,
 		clockEndsAt = m.clockEndsAt,
 		-- for the broadcast camera
 		losWorld = m.field:ToWorld(0, m.los, 0),
@@ -365,7 +435,7 @@ local function stateFor(m, viewer, side, message, color)
 end
 
 local function sendState(m, message, color)
-	for side, p in m.humans do
+	for p, side in m.viewers do
 		fire(p, stateFor(m, p, side, message, color))
 	end
 end
@@ -378,7 +448,18 @@ local function setPossession(m, who)
 	m.controlSlot = m.control[other(who)] or MatchConfig.DefaultControl
 	local off = who == "user" and m.user or m.cpu
 	local def = who == "user" and m.cpu or m.user
-	m.units = { Offense = off.off, Defense = def.def }
+	-- custom games: each player's stand-in (proxy) takes his spot; that spot's NPC stays hidden
+	local function withProxies(npcs, proxies)
+		if not proxies or next(proxies) == nil then
+			return npcs
+		end
+		local out = {}
+		for slotId, unit in npcs do
+			out[slotId] = proxies[slotId] or unit
+		end
+		return out
+	end
+	m.units = { Offense = withProxies(off.off, off.proxies and off.proxies.Offense), Defense = withProxies(def.def, def.proxies and def.proxies.Defense) }
 	for _, unit in off.def do
 		unit:Hide(true)
 	end
@@ -397,6 +478,31 @@ local function placeAvatar(m, player, cf, speed)
 	root.AssemblyLinearVelocity = Vector3.zero
 	root.Anchored = true
 	hum.WalkSpeed = speed
+end
+
+-- Custom games: a player standing in for an NPC spot. Looks like an Npc to the play engine
+-- (position, ratings, tackles, blocks, catches), but the player moves himself.
+local function makeProxy(m, npc, player)
+	local u = makeAvatarUnit(m, npc, player)
+	u.isProxy = true
+	u.side = npc.side
+	local char = player.Character
+	u.model = char
+	u.root = char and char:FindFirstChild("HumanoidRootPart")
+	u.humanoid = char and char:FindFirstChildOfClass("Humanoid")
+	u.hidden = false
+	function u:MoveTo() end
+	function u:Animate() end
+	function u:Hide() end
+	function u:SetTag() end
+	function u:Destroy() end
+	function u:Place(cf)
+		placeAvatar(m, player, cf, u.speed)
+	end
+	function u:Fall()
+		fire(player, { event = "fall" })
+	end
+	return u
 end
 
 local function lineUp(m)
@@ -476,6 +582,7 @@ local function tagTargets(m)
 			weld.Part0 = unit.root
 			weld.Part1 = ring
 			weld.Parent = ring
+			ring:AddTag("TargetRing")
 			ring.Parent = unit.model
 			table.insert(m.rings, ring)
 		end
@@ -866,7 +973,7 @@ local function attemptTackle(m, def, now)
 		log(("tackle broken: %s %d vs TAK %d (%.0f%% to tackle)"):format(moveName, move, tak, p * 100))
 		callout(m, m.play.carrier, moveName .. "!", "good")
 		tally(m, m.possession, "broken")
-		if def.isAvatar or offHuman(m) then
+		if def.isAvatar or offHuman(m) or m.custom then
 			sendState(m, function(_, side)
 				if side == m.possession then
 					return moveName .. "!"
@@ -1134,7 +1241,7 @@ local function think(m, now)
 		end
 	end
 
-	if not offHuman(m) and play.state == "dropback" and not m.call.run then
+	if not offHuman(m) and not off.QB.isProxy and play.state == "dropback" and not m.call.run then
 		cpuQbDecide(m, now)
 	end
 
@@ -1172,8 +1279,16 @@ local function resolveCatch(m)
 	end
 	local cov = nearest and (m.defCall == "zone" and nearest.attrs.ZCV or nearest.attrs.MCV) or 50
 	-- you (on defense) near the landing spot: a real shot at the pick, otherwise a likely breakup
-	local me = m.avatarUnit
-	local meDist = me and hdist(me:Position(), a.to) or math.huge
+	-- the nearest human defender (you vs CPU / head-to-head, any player in a custom game)
+	local me, meDist = nil, math.huge
+	for _, d in defenders(m) do
+		if d.isAvatar then
+			local dd = hdist(d:Position(), a.to)
+			if dd < meDist then
+				me, meDist = d, dd
+			end
+		end
+	end
 	if me and meDist < 4.5 then
 		local myCov = m.defCall == "zone" and me.attrs.ZCV or me.attrs.MCV
 		local pInt = math.clamp(0.16 + (4.5 - meDist) * 0.09 + (myCov - 60) * 0.004 + (me.attrs.CTH - 50) * 0.004 + (rcvDist > 4 and 0.15 or 0), 0.12, 0.65)
@@ -1257,7 +1372,7 @@ local function step(m)
 		local _, hum = avatarParts(m, player)
 		if hum and av.speed then
 			local speed = av.speed * MatchConfig.Ramp(av.ramp or 0.6, now - (av.accelFrom or 0))
-			local u = m.avatarUnit
+			local u = av.unit or m.avatarUnit
 			if u and u.player == player then
 				if now < u.stunUntil then
 					speed *= 0.3
@@ -1285,7 +1400,7 @@ local function step(m)
 		endPlay(m, "td", fy)
 		return
 	end
-	if offHuman(m) and play.state == "dropback" and fy > m.los + Y then
+	if (offHuman(m) or (type(play.carrier) == "table" and play.carrier.isProxy)) and play.state == "dropback" and fy > m.los + Y then
 		play.state = "carry" -- QB scramble: no throwing past the line
 		play.carrierCard = m.units.Offense.QB.card
 		sendState(m, "SCRAMBLE!", GOLD)
@@ -1351,7 +1466,7 @@ function endPlay(m, result, spotY, defender, receiver)
 			hum.WalkSpeed = 0
 		end
 	end
-	for _, p in m.humans do
+	for p in m.viewers do
 		local _, hum = avatarParts(m, p)
 		if hum then
 			hum.WalkSpeed = 0
@@ -1510,6 +1625,20 @@ local function snap(m)
 			end
 		end
 	end
+	if m.custom then
+		for _, side in m.units do
+			for _, unit in side do
+				if unit.isProxy then
+					local _, hum, root = avatarParts(m, unit.player)
+					if root then
+						root.Anchored = false
+						hum.WalkSpeed = unit.speed
+						m.av[unit.player] = { speed = unit.speed, ramp = unit.rampTime or 0.6, accelFrom = play.t0, unit = unit }
+					end
+				end
+			end
+		end
+	end
 	pressAtLine(m, play.t0)
 	if m.call.run then
 		local token = m.token
@@ -1546,13 +1675,21 @@ function throwBall(m, rcv)
 	end
 	local qb = m.units.Offense.QB.attrs
 	local ballSpeed = 40 + qb.THP * 0.4 -- THP 70 -> 68, 95 -> 78 studs/s
-	if defHuman(m) then
+	local humanDefense = defHuman(m) ~= nil
+	for _, d in m.units.Defense do
+		humanDefense = humanDefense or d.isProxy == true
+	end
+	if humanDefense then
 		ballSpeed *= 0.8 -- throws hang a little longer when a human is on defense, so he can react
 	end
 	-- lead the receiver along his actual route (so throws hit him after his cut), at the speed
 	-- he's really moving (still building up, jammed, or in a cut), not just his top speed
 	local runSpeed = math.clamp((rcv:Velocity().Magnitude + rcv.speed) / 2, rcv.speed * 0.5, rcv.speed)
 	local function along(t)
+		if rcv.isProxy then
+			-- a player runs his own way: lead him along the way he's moving
+			return rcv:Position() + rcv:Velocity() * t
+		end
 		local pos = flat(rcv:Position())
 		local budget = runSpeed * t
 		for i = route.index, #route.points do
@@ -1632,7 +1769,7 @@ end
 local function userThrow(m, player, key)
 	local play = m.play
 	local slotId = MatchConfig.Targets[key]
-	if offHuman(m) ~= player or not play or play.state ~= "dropback" or m.call.run or not slotId or not play.routes[slotId] then
+	if not isQbPlayer(m, player) or not play or play.state ~= "dropback" or m.call.run or not slotId or not play.routes[slotId] then
 		return
 	end
 	throwBall(m, m.units.Offense[slotId])
@@ -1659,10 +1796,10 @@ end
 local function beginPresnap(m)
 	m.play = { state = "presnap" }
 	m.phase = "presnap"
-	if offHuman(m) then
+	if offHuman(m) or m.units.Offense.QB.isProxy then
 		tagTargets(m)
 	end
-	m.clockEndsAt = m.h2h and (workspace:GetServerTimeNow() + RankConfig.SnapSeconds) or nil
+	m.clockEndsAt = m.clock and (workspace:GetServerTimeNow() + RankConfig.SnapSeconds) or nil
 	sendState(m)
 	if m.clockEndsAt then
 		local token = m.token
@@ -1697,14 +1834,14 @@ function nextPlay(m)
 	m.defCall = nil
 	m.phase = "calls"
 	-- the AI side calls at once
-	if not offHuman(m) then
+	if not callerFor(m, m.possession) then
 		m.call = cpuPlayCall(m)
 	end
-	if not defHuman(m) then
+	if not callerFor(m, other(m.possession)) then
 		m.defCall = aiDefCall()
 	end
 	lineUp(m)
-	m.clockEndsAt = m.h2h and (workspace:GetServerTimeNow() + RankConfig.CallSeconds) or nil
+	m.clockEndsAt = m.clock and (workspace:GetServerTimeNow() + RankConfig.CallSeconds) or nil
 	sendState(m)
 	if m.clockEndsAt then
 		local token = m.token
@@ -1760,6 +1897,9 @@ local function award(m, side, result, ratingChange)
 		coins = RankConfig.Rewards[result] * (vip and 2 or 1)
 	else
 		coins = MatchConfig.RewardFor(result, m.difficulty.id) * (vip and 2 or 1)
+	end
+	if m.noRewards then
+		coins = 0
 	end
 	local unlocked = {}
 	local opp = other(side)
@@ -1854,7 +1994,11 @@ function finishGame(m)
 		changes.cpu = { old = rb, new = nb, division = RankConfig.Division(nb).name }
 	end
 	m.final = {}
-	for side in m.humans do
+	local sidesPlaying = {}
+	for _, side in m.viewers do
+		sidesPlaying[side] = true
+	end
+	for side in sidesPlaying do
 		m.final[side] = award(m, side, results[side], changes[side])
 	end
 	log(("game over (%s): %s %d - %d %s%s"):format(m.mode, teamName(m, "user"), a, b, teamName(m, "cpu"), m.forfeitBy and (" (forfeit by " .. m.forfeitBy .. ")") or ""))
@@ -1897,6 +2041,59 @@ end
 
 -- One player leaves the game (quit, left the server, respawned): back to the lobby. In a live
 -- head-to-head game that's a forfeit. The match is torn down once no humans are left.
+-- Custom game: a player left. His spots go back to the AI (mid-play too); if he was calling the
+-- plays, the next player (or the AI) calls them.
+local function dropCustomPlayer(m, player)
+	local ctrl = m.ctrl[player]
+	m.ctrl[player] = nil
+	local i = table.find(m.order, player)
+	if i then
+		table.remove(m.order, i)
+	end
+	if not ctrl or not m.alive or not m.units then
+		return
+	end
+	local team = m[ctrl.side]
+	local _, _, root = avatarParts(m, player)
+	local relineup = false
+	for sideName, slotId in { Offense = ctrl.off, Defense = ctrl.def } do
+		local proxy = team.proxies[sideName][slotId]
+		team.proxies[sideName][slotId] = nil
+		local npc = (sideName == "Offense" and team.off or team.def)[slotId]
+		if proxy and npc and m.units[sideName][slotId] == proxy then
+			if m.play and m.play.carrier == proxy and m.play.state ~= "dead" and m.play.state ~= "presnap" then
+				local _, fy = m.field:ToField(proxy:Position())
+				endPlay(m, "timeout", fy)
+			end
+			m.units[sideName][slotId] = npc
+			npc.home = proxy.home
+			npc:Hide(false)
+			if m.phase == "live" and root then
+				npc:Place(CFrame.new(root.Position - Vector3.new(0, 3, 0)) * root.CFrame.Rotation)
+				npc.accelFrom = os.clock()
+				npc:SetTag(("%d %s %s"):format(npc.card.ovr, npc.card.pos, nameOf(npc)))
+			else
+				relineup = true
+			end
+		end
+	end
+	if relineup and (m.phase == "calls" or m.phase == "presnap") then
+		lineUp(m)
+		if m.phase == "presnap" and m.call and not m.call.run and m.units.Offense.QB.isProxy then
+			tagTargets(m)
+		end
+	end
+	-- he was calling: the AI calls for that team now (if nobody else can)
+	if m.phase == "calls" then
+		if not m.call and not callerFor(m, m.possession) then
+			makeCall(m, "off", cpuPlayCall(m).id)
+		end
+		if m.phase == "calls" and not m.defCall and not callerFor(m, other(m.possession)) then
+			makeCall(m, "def", aiDefCall())
+		end
+	end
+end
+
 local function exitPlayer(m, player)
 	local side = sideOf(m, player)
 	if not side then
@@ -1906,7 +2103,12 @@ local function exitPlayer(m, player)
 		m.forfeitBy = side
 		finishGame(m)
 	end
-	m.humans[side] = nil
+	if m.custom then
+		dropCustomPlayer(m, player)
+	else
+		m.humans[side] = nil
+	end
+	m.viewers[player] = nil
 	if m.avatarUnit and m.avatarUnit.player == player then
 		m.avatarUnit = nil
 	end
@@ -1933,10 +2135,9 @@ local function exitPlayer(m, player)
 	if isPlayer(player) then
 		MatchService.PlayerExited:Fire(player)
 	end
-	if next(m.humans) == nil then
+	if next(m.viewers) == nil then
 		destroyMatch(m)
 	elseif m.phase ~= "final" then
-		-- (vs CPU only has one human, so this is a head-to-head game that just ended above)
 		sendState(m)
 	end
 end
@@ -1995,6 +2196,8 @@ local function createMatch(opts)
 		-- a new player's first game: the match UI coaches every step
 		tutorial = not h2h and profileA ~= nil and (profileA.data.tutorial ~= "done" or (RunService:IsStudio() and a:GetAttribute("DevTutorial") == true)),
 		humans = { user = a, cpu = b },
+		viewers = {}, -- [Player] = side, everyone who gets the game state
+		clock = h2h, -- play clock on calls and snaps
 		alive = true,
 		token = 0,
 		score = { user = 0, cpu = 0 },
@@ -2053,6 +2256,7 @@ local function createMatch(opts)
 			Npc.Unequip(char) -- lobby gear off; game gear (with away colors if needed) on
 			Npc.Equip(char, side == "user" and jerseyA.primary or primaryB, side == "user" and jerseyA.secondary or secondaryB, jersey)
 			matches[p] = m
+			m.viewers[p] = side
 			if isPlayer(p) then
 				m.charConns[p] = p.CharacterAdded:Connect(function()
 					exitPlayer(m, p) -- died/respawned mid-game
@@ -2069,6 +2273,193 @@ local function createMatch(opts)
 				matches[p] = nil
 			end
 		end
+		pcall(destroyMatch, m)
+		return nil, err
+	end
+	return m
+end
+
+
+-- Custom games ----------------------------------------------------------------------------------
+-- Friends' 7v7 from a custom lobby (CustomService). Each player plays the offensive and defensive
+-- spot he picked as his own best card at that position; empty spots are AI around the team's
+-- average. A team nobody joined is a CPU team. Play clocks on, no rewards.
+
+local function bestCardFor(profile, pos)
+	local best
+	for _, entry in (profile and profile.data.cards or {}) do
+		local card = CardDatabase.Get(entry.id)
+		if card and card.pos == pos and (not best or card.ovr > best.ovr) then
+			best = card
+		end
+	end
+	return best
+end
+
+local function aiCard(pos, want, usedPid, teamId)
+	local best, bestScore
+	for _, card in CardDatabase.All() do
+		if card.program == "Base" and card.pos == pos and not usedPid[card.pid] then
+			local score = math.abs(card.ovr - want) + ((teamId and card.team ~= teamId) and 6 or 0) + rng:NextNumber(0, 2)
+			if not bestScore or score < bestScore then
+				best, bestScore = card, score
+			end
+		end
+	end
+	return best or fillerCard(pos)
+end
+
+-- average OVR of the cards these players bring (nil if nobody)
+local function customAverage(entries)
+	local sum, n = 0, 0
+	for _, e in entries do
+		local profile = PlayerData.Get(e.player)
+		for _, slotId in { e.off, e.def } do
+			local card = bestCardFor(profile, LineupConfig.ById[slotId].pos)
+			sum += card and card.ovr or 65
+			n += 1
+		end
+	end
+	return n > 0 and math.floor(sum / n + 0.5) or nil
+end
+
+local function customSquad(entries, target, aiTeamId)
+	local cards, infos, usedPid = {}, {}, {}
+	for _, e in entries do
+		local profile = PlayerData.Get(e.player)
+		for _, slotId in { e.off, e.def } do
+			local pos = LineupConfig.ById[slotId].pos
+			local card = bestCardFor(profile, pos) or aiCard(pos, 65, usedPid)
+			cards[slotId] = card
+			infos[slotId] = CardDatabase.GetPlayerInfo(card.pid) or { last = e.player.DisplayName, number = 0 }
+		end
+	end
+	for _, card in cards do
+		usedPid[card.pid] = true
+	end
+	for _, slot in LineupConfig.Slots do
+		if not cards[slot.id] then
+			local card = aiCard(slot.pos, target + rng:NextInteger(-3, 2), usedPid, aiTeamId)
+			usedPid[card.pid] = true
+			cards[slot.id] = card
+			infos[slot.id] = CardDatabase.GetPlayerInfo(card.pid) or { last = "AI", number = 0 }
+		end
+	end
+	return cards, infos
+end
+
+-- spec: { home = { { player, off, def }, ... }, away = { ... }, onEnd = function() }
+local function createCustomMatch(spec)
+	local sides = { user = spec.home or {}, cpu = spec.away or {} }
+	local m = {
+		mode = "custom",
+		custom = true,
+		h2h = false,
+		ranked = false,
+		modeLabel = "CUSTOM",
+		noRewards = true,
+		clock = true,
+		humans = {}, -- (the one-player-per-side controls are off in custom games)
+		viewers = {},
+		ctrl = {}, -- [Player] = { side, off, def }
+		order = {}, -- players in lobby order (the first on a team is its captain)
+		alive = true,
+		token = 0,
+		score = { user = 0, cpu = 0 },
+		drive = 1,
+		difficulty = MatchConfig.DifficultyById[MatchConfig.DefaultDifficulty],
+		tally = { user = {}, cpu = {} },
+		control = {},
+		av = {},
+		charConns = {},
+		onDestroy = spec.onEnd,
+	}
+	local buildStart = os.clock()
+	local ok, err = pcall(function()
+		-- looks: each team wears its captain's jersey; a team nobody joined is a CPU team
+		local looks = {}
+		for side, entries in sides do
+			local captain = entries[1] and entries[1].player
+			if captain then
+				local j = jerseyOf(PlayerData.Get(captain))
+				looks[side] = { primary = j.primary, secondary = j.secondary, jersey = j }
+			else
+				local teams = CardDatabase.Teams()
+				local t = teams[rng:NextInteger(1, #teams)]
+				looks[side] = { primary = Color3.fromHex(t.primary), secondary = Color3.fromHex(t.secondary), team = t }
+			end
+		end
+		local pB, sB = awayColors(looks.user.primary, looks.cpu.primary, looks.cpu.secondary)
+		if pB ~= looks.cpu.primary then
+			looks.cpu.jersey = nil
+		end
+		looks.cpu.primary, looks.cpu.secondary = pB, sB
+
+		local avgU, avgC = customAverage(sides.user), customAverage(sides.cpu)
+		local cardsU, infosU = customSquad(sides.user, avgU or avgC or 72, looks.user.team and looks.user.team.id)
+		local cardsC, infosC = customSquad(sides.cpu, avgC or avgU or 72, looks.cpu.team and looks.cpu.team.id)
+		local function teamInfo(side)
+			local look = looks[side]
+			if look.team then
+				return look.team
+			end
+			local captain = sides[side][1].player
+			return { id = nil, city = "", name = "TEAM " .. string.upper(captain.DisplayName), primary = look.primary:ToHex(), secondary = look.secondary:ToHex(), human = true }
+		end
+		local infoU, infoC = teamInfo("user"), teamInfo("cpu")
+
+		m.field = Field.new(Color3.fromRGB(16, 120, 80), looks.cpu.primary, {
+			homeName = string.upper(infoU.name),
+			awayName = string.upper(infoC.name),
+			screenText = "",
+			crowd = { looks.user.secondary, looks.user.primary, looks.cpu.primary, looks.cpu.secondary, Color3.fromRGB(240, 240, 245) },
+		})
+		m.user = buildTeam(m, cardsU, infosU, looks.user.primary, looks.user.secondary, looks.user.jersey)
+		m.user.team = infoU
+		m.user.confetti = looks.user.secondary
+		m.cpu = buildTeam(m, cardsC, infosC, looks.cpu.primary, looks.cpu.secondary, looks.cpu.jersey)
+		m.cpu.team = infoC
+		m.cpu.confetti = looks.cpu.secondary
+		m.ball, m.ballTrail = makeBall()
+
+		for side, entries in sides do
+			local team = m[side]
+			team.proxies = { Offense = {}, Defense = {} }
+			for _, e in entries do
+				local p = e.player
+				team.proxies.Offense[e.off] = makeProxy(m, team.off[e.off], p)
+				team.proxies.Defense[e.def] = makeProxy(m, team.def[e.def], p)
+				m.viewers[p] = side
+				m.ctrl[p] = { side = side, off = e.off, def = e.def }
+				local char = p.Character
+				Npc.SetCollisionGroup(char)
+				Npc.Unequip(char)
+				Npc.Equip(char, looks[side].primary, looks[side].secondary, looks[side].jersey)
+				matches[p] = m
+				if isPlayer(p) then
+					m.charConns[p] = p.CharacterAdded:Connect(function()
+						exitPlayer(m, p) -- died/respawned mid-game
+					end)
+				end
+			end
+		end
+		for _, side in { "user", "cpu" } do
+			for _, e in sides[side] do
+				table.insert(m.order, e.player)
+			end
+		end
+		log(("CUSTOM: %s (%d, %d players) vs %s (%d, %d players), built in %.1fs"):format(
+			teamName(m, "user"), m.user.ratings.ovr, #sides.user, teamName(m, "cpu"), m.cpu.ratings.ovr, #sides.cpu, os.clock() - buildStart))
+		startDrive(m, "user")
+	end)
+	if not ok then
+		warn("[Match] couldn't start the custom game:", err)
+		for _, entries in sides do
+			for _, e in entries do
+				matches[e.player] = nil
+			end
+		end
+		m.onDestroy = nil
 		pcall(destroyMatch, m)
 		return nil, err
 	end
@@ -2097,6 +2488,27 @@ function MatchService.StartH2H(a, b, ranked)
 	return m ~= nil, err
 end
 
+-- Custom game from a lobby. Fails if anyone is already in a game or still loading.
+function MatchService.StartCustom(spec)
+	local count = 0
+	for _, entries in { spec.home or {}, spec.away or {} } do
+		for _, e in entries do
+			count += 1
+			if matches[e.player] then
+				return false, e.player.DisplayName .. " is already in a game."
+			end
+			if isPlayer(e.player) and not ready(e.player) then
+				return false, e.player.DisplayName .. " is still loading."
+			end
+		end
+	end
+	if count == 0 then
+		return false, "Nobody to play."
+	end
+	local m, err = createCustomMatch(spec)
+	return m ~= nil, err
+end
+
 local function handleAction(player, action, arg)
 	local m = matches[player]
 	if not m or not m.alive then
@@ -2107,15 +2519,16 @@ local function handleAction(player, action, arg)
 		return
 	end
 	local onOffense = side == m.possession
-	if action == "call" and onOffense and MatchConfig.PlaysById[arg] then
+	local isCaller = callerFor(m, side) == player
+	if action == "call" and onOffense and isCaller and MatchConfig.PlaysById[arg] then
 		makeCall(m, "off", arg)
-	elseif action == "defcall" and not onOffense and MatchConfig.DefenseCallsById[arg] then
+	elseif action == "defcall" and not onOffense and isCaller and MatchConfig.DefenseCallsById[arg] then
 		makeCall(m, "def", arg)
-	elseif action == "snap" and m.phase == "presnap" and (onOffense or not offHuman(m)) then
+	elseif action == "snap" and m.phase == "presnap" and canSnapFor(m, player, side) then
 		snap(m)
 	elseif action == "throw" and m.phase == "live" and type(arg) == "number" and onOffense then
 		userThrow(m, player, arg)
-	elseif action == "switch" and not onOffense and (m.phase == "presnap" or m.phase == "live" or m.phase == "calls") then
+	elseif action == "switch" and not onOffense and not m.custom and (m.phase == "presnap" or m.phase == "live" or m.phase == "calls") then
 		local now = os.clock()
 		if now - (m.lastSwitch or 0) < 0.4 then
 			return
@@ -2208,6 +2621,75 @@ local function startTestBot(player)
 	return { ok = true }
 end
 
+-- Studio only: a custom game with you and a scripted bot player ("mate" = on your team as WR1/S,
+-- otherwise the other team's QB/CB1), for testing several humans in one game
+local function startCustomTestBot(player, mode)
+	local desc = Instance.new("HumanoidDescription")
+	local rig = Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15)
+	rig.Name = "TestBot"
+	rig:PivotTo(CFrame.new(0, 6, 30))
+	rig.Parent = workspace
+	rig.HumanoidRootPart:SetNetworkOwner(nil)
+	local bot = { DisplayName = "BOT", Name = "TestBot", UserId = -1, Character = rig, Parent = workspace, isBot = true }
+	local mate = mode == "mate"
+	local spec = {
+		home = mate and { { player = player, off = "QB", def = "CB1" }, { player = bot, off = "WR1", def = "S" } } or { { player = player, off = "QB", def = "CB1" } },
+		away = mate and {} or { { player = bot, off = "QB", def = "CB1" } },
+		onEnd = function()
+			rig:Destroy()
+		end,
+	}
+	local okStart, err = MatchService.StartCustom(spec)
+	if not okStart then
+		rig:Destroy()
+		return { ok = false, err = err }
+	end
+	local m = matches[bot]
+	task.spawn(function()
+		while m.alive and m.viewers[bot] do
+			task.wait(0.25)
+			local side = m.viewers[bot]
+			local onOffense = side == m.possession
+			local hum = rig:FindFirstChildOfClass("Humanoid")
+			local ctrl = m.ctrl[bot]
+			if m.phase == "final" then
+				task.wait(2)
+				handleAction(bot, "leave")
+				break
+			elseif m.phase == "calls" and callerFor(m, side) == bot then
+				task.wait(1)
+				if onOffense and not m.call then
+					handleAction(bot, "call", cpuPlayCall(m).id)
+				elseif not onOffense and not m.defCall then
+					handleAction(bot, "defcall", aiDefCall())
+				end
+			elseif m.phase == "presnap" and canSnapFor(m, bot, side) then
+				task.wait(1.2)
+				handleAction(bot, "snap")
+			elseif m.phase == "live" and m.play and hum and ctrl then
+				local carrier = m.play.carrier
+				if isQbPlayer(m, bot) and m.play.state == "dropback" then
+					if os.clock() - m.play.t0 > 1.8 then
+						handleAction(bot, "throw", rng:NextInteger(1, 3))
+					end
+				elseif type(carrier) == "table" and carrier.player == bot then
+					hum:MoveTo(rig.HumanoidRootPart.Position + m.field:Downfield() * 20)
+				elseif onOffense then
+					-- receiver: run downfield; go for the ball when it's thrown to him
+					local air = m.play.state == "air" and m.play.air
+					hum:MoveTo(air and air.target and air.target.player == bot and air.to or (rig.HumanoidRootPart.Position + m.field:Downfield() * 12))
+				else
+					local target = m.play.state == "air" and m.play.air.to or carrierPos(m)
+					if target then
+						hum:MoveTo(target)
+					end
+				end
+			end
+		end
+	end)
+	return { ok = true }
+end
+
 function MatchService.Start(remoteFolder)
 	remotes = remoteFolder
 
@@ -2236,6 +2718,10 @@ function MatchService.Start(remoteFolder)
 		dev.Name = "DevStartH2H"
 		dev.Parent = remotes
 		dev.OnServerInvoke = startTestBot
+		local devCustom = remotes:FindFirstChild("DevStartCustom") or Instance.new("RemoteFunction")
+		devCustom.Name = "DevStartCustom"
+		devCustom.Parent = remotes
+		devCustom.OnServerInvoke = startCustomTestBot
 	end
 
 	Players.PlayerRemoving:Connect(function(player)

@@ -28,6 +28,7 @@ local files = {
 	"ReplicatedStorage/Shared/BadgeConfig.lua",
 	"ServerScriptService/Modules/Badges.lua",
 	"ServerScriptService/Modules/ReferralService.lua",
+	"ReplicatedStorage/Client/CustomLobbyUI.lua",
 	"ReplicatedStorage/Client/MatchCamera.lua",
 	"ReplicatedStorage/Client/Sounds.lua",
 	"ReplicatedStorage/Client/MatchFX.lua",
@@ -41,6 +42,7 @@ local files = {
 	"ServerScriptService/Modules/CardDatabase.lua",
 	"ServerScriptService/Modules/PlayerData.lua",
 	"ServerScriptService/Modules/PackService.lua",
+	"ServerScriptService/Modules/CustomService.lua",
 	"ServerScriptService/Bootstrap.server.lua",
 	"StarterPlayer/StarterPlayerScripts/MainUI.client.lua",
 }

@@ -67,10 +67,24 @@ local function targetCFrame(dt)
 	lastBallPos, ballDir = nil, nil
 
 	if userBall then
+		if playState == "carry" and root and s.mode == "custom" and not s.youCarry then
+			-- custom game, a teammate has the ball: frame you and him from behind
+			local p = root.Position
+			local look = ball and ball.Parent and ball.Position or p
+			local mid = p:Lerp(look, 0.5)
+			return CFrame.lookAt(mid - down * 26 + UP * 20, mid + down * 4), 5
+		end
 		if playState == "carry" and root then
 			-- chase cam on you with the ball
 			local p = root.Position
 			return CFrame.lookAt(p - down * 20 + UP * 13, p + down * 14), 6
+		end
+		if s.mode == "custom" and not s.canThrow and playState == "dropback" and root then
+			-- custom game, you're not the QB: frame you and the ball from behind the offense
+			local p = root.Position
+			local look = ball and ball.Parent and ball.Position or los
+			local mid = p:Lerp(look, 0.35)
+			return CFrame.lookAt(mid - down * 30 + UP * 26, mid), 5
 		end
 		-- high view from behind the offense, sliding a little with the QB
 		local x = root and flat(root.Position - los) or Vector3.zero

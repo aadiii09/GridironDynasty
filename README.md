@@ -47,3 +47,17 @@ Players who already reached a milestone get the badge the next time they join.
   paid for at most 10 friends.
 - **Gear** (top bar): music and sound-effect volume, camera shake, rating callouts and lobby camera
   motion, saved to the player's account.
+
+## Custom 7v7 (friends)
+PLAY -> **CUSTOM 7v7**: create a game (or join one in this server), pick HOME or AWAY, one offensive
+spot and one defensive spot, and the host presses START. Up to 7 players a team.
+- Everyone plays as their own best card at the spot they picked; open spots are AI players around
+  the team's average (a team nobody joined is a full CPU team).
+- Whoever plays QB calls the offense; otherwise the team's first player (its captain) calls and snaps.
+  The captain also calls the defense. Play clocks keep things moving.
+- No rewards (no Coins, wins, challenges or leaderboard), so friends can't farm each other.
+- After the game everyone is back in the lobby, ready to run it back. Someone who leaves mid-game
+  hands their spots back to the AI.
+- Code: `CustomService` (lobbies), `MatchService` (stand-in "proxy" units let any player take an NPC's
+  spot), `CustomLobbyUI` (the tab and the party pill). In Studio, `Remotes.DevStartCustom` starts a
+  test game with a scripted bot ("mate" = on your team, anything else = the other team's QB).

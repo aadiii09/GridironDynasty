@@ -150,6 +150,19 @@ local function avatarPose()
 		return localPose
 	end
 	local userBall = state.possession == "user"
+	if state.mode == "custom" then
+		-- custom games: the stance of the spot you play
+		local pos = state.control and state.control.pos
+		if state.phase == "presnap" or state.phase == "playcall" or state.phase == "defcall" or state.phase == "waiting" then
+			return pos == "QB" and "qb" or ((pos == "OL" or pos == "DL") and "stance3" or "stance2")
+		end
+		if state.phase == "live" and state.youCarry and state.playState == "carry" then
+			return "carry"
+		elseif state.phase == "live" and state.canThrow and state.playState == "dropback" then
+			return "qb"
+		end
+		return nil
+	end
 	if state.phase == "presnap" or state.phase == "playcall" or state.phase == "defcall" then
 		return userBall and "qb" or "stance2"
 	end
@@ -352,7 +365,7 @@ local function cues(s, p)
 	-- throw
 	if s.playState == "air" and (not p or p.playState ~= "air") then
 		Sounds.Play("whoosh", 1, 0.9 + math.random() * 0.2)
-		if userBall then
+		if s.canThrow then
 			localPose, localPoseUntil = "throw", os.clock() + 0.55
 		end
 	end

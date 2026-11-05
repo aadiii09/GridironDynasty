@@ -6,6 +6,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
+local CollectionService = game:GetService("CollectionService")
 local UserInputService = game:GetService("UserInputService")
 
 local MatchConfig = require(ReplicatedStorage.Shared.MatchConfig)
@@ -264,20 +265,15 @@ function showCallout(model, text, colorHex)
 end
 
 -- open / covered: target rings and throw buttons colored by each receiver's separation, live ---
-local DEFENDER_SLOTS = { CB1 = true, CB2 = true, LB1 = true, LB2 = true, S = true, DL1 = true, DL2 = true }
 RunService.RenderStepped:Connect(function()
 	local s = state
 	if not s or not s.ball or not s.ball.Parent then
 		return
 	end
-	local field = s.ball.Parent
 	-- the offense's target rings are only for the offense
 	if s.possession ~= "user" then
-		for _, m in field:GetChildren() do
-			local ring = m:IsA("Model") and m:FindFirstChild("TargetRing")
-			if ring then
-				ring.LocalTransparencyModifier = 1
-			end
+		for _, ring in CollectionService:GetTagged("TargetRing") do
+			ring.LocalTransparencyModifier = 1
 		end
 		return
 	end
@@ -285,18 +281,16 @@ RunService.RenderStepped:Connect(function()
 		return
 	end
 	local defs, rings = {}, {}
-	for _, m in field:GetChildren() do
-		if m:IsA("Model") then
-			if DEFENDER_SLOTS[m.Name] then
-				local root, head = m:FindFirstChild("HumanoidRootPart"), m:FindFirstChild("Head")
-				if root and head and head.Transparency < 1 then
-					table.insert(defs, root.Position)
-				end
-			end
-			local ring = m:FindFirstChild("TargetRing")
-			if ring then
-				table.insert(rings, ring)
-			end
+	for _, m in s.defModels or {} do
+		local root, head = m:FindFirstChild("HumanoidRootPart"), m:FindFirstChild("Head")
+		if root and head and head.Transparency < 1 then
+			table.insert(defs, root.Position)
+		end
+	end
+	for _, t in s.targets or {} do
+		local ring = t.model and t.model:FindFirstChild("TargetRing")
+		if ring then
+			table.insert(rings, ring)
 		end
 	end
 	for _, ring in rings do
@@ -334,7 +328,7 @@ local function render()
 		return
 	end
 	local userBall = s.possession == "user"
-	youBox.name.Text = string.upper(player.DisplayName)
+	youBox.name.Text = s.yourTeam and s.yourTeam.name or string.upper(player.DisplayName)
 	youBox.score.Text = tostring(s.you)
 	youBox.box.BackgroundColor3 = Color3.fromRGB(16, 60, 40)
 	youBox.logo.Image = Assets.icon_football
@@ -353,7 +347,7 @@ local function render()
 	youBox.ball.Visible = userBall
 	cpuBox.ball.Visible = not userBall
 	local ordinal = ({ "1st", "2nd", "3rd", "4th" })[s.down] or (s.down .. "th")
-	situation.Text = ("%s & %s   |   %s   |   DRIVE %d/%d%s"):format(ordinal, s.toGo, s.spot, math.min(s.drive, s.drives), s.drives, (s.mode == "ranked" or s.mode == "friendly") and ("   |   " .. s.difficulty) or "")
+	situation.Text = ("%s & %s   |   %s   |   DRIVE %d/%d%s"):format(ordinal, s.toGo, s.spot, math.min(s.drive, s.drives), s.drives, (s.mode == "ranked" or s.mode == "friendly" or s.mode == "custom") and ("   |   " .. s.difficulty) or "")
 	if s.phase == "final" then
 		situation.Text = ("FINAL   |   %s   |   TEAM RATING  %d vs %d"):format(s.difficulty or "", s.ratings.you.ovr, s.ratings.cpu.ovr)
 	end
@@ -371,40 +365,69 @@ local function render()
 			end).Parent = controls
 		end
 	elseif s.phase == "defcall" then
-		hint.Text = ("DEFENSE  -  %s. You're the %s %s"):format(TOUCH and "tap a coverage" or "call a coverage (1-3), Q to switch", s.control and s.control.pos or "", s.control and s.control.name or "")
+		hint.Text = ("DEFENSE  -  %s. You're the %s %s"):format(TOUCH and "tap a coverage" or (s.canSwitch and "call a coverage (1-3), Q to switch" or "call a coverage (1-3)"), s.control and s.control.pos or "", s.control and s.control.name or "")
 		for i, call in MatchConfig.DefenseCalls do
 			local color = i == 3 and C.Red or C.Blue
 			callCard(i, call.name, call.desc, Assets["play_" .. call.id], color, function()
 				MatchAction:FireServer("defcall", call.id)
 			end).Parent = controls
 		end
-		switchButton().Parent = controls
+		if s.canSwitch then
+			switchButton().Parent = controls
+		end
 	elseif s.phase == "waiting" then
-		hint.Text = ("Waiting for %s to call..."):format(s.opponent.name)
+		local you = s.control and ("You're the %s  -  "):format(s.control.pos) or ""
+		hint.Text = you .. ("Waiting for %s to call..."):format(s.waitingFor or s.opponent.name)
 	elseif s.phase == "presnap" and not userBall and not s.canSnap then
 		hint.Text = ("You're the %s %s  -  %s snaps the ball"):format(s.control and s.control.pos or "", s.control and s.control.name or "", s.opponent.name)
-		switchButton().Parent = actionHolder()
+		if s.canSwitch then
+			switchButton().Parent = actionHolder()
+		end
 	elseif s.phase == "presnap" and not userBall then
-		hint.Text = ("You're the %s %s%s"):format(s.control and s.control.pos or "", s.control and s.control.name or "", TOUCH and "" or "  -  Space when ready, Q to switch")
+		hint.Text = ("You're the %s %s%s"):format(s.control and s.control.pos or "", s.control and s.control.name or "", TOUCH and "" or (s.canSwitch and "  -  Space when ready, Q to switch" or "  -  Space when ready"))
 		UI.button({ kind = "primary", icon = "whistle", text = TOUCH and "READY" or "READY  [SPACE]", size = UDim2.fromOffset(TOUCH and 220 or 250, 64), textSize = 18 }, function()
 			MatchAction:FireServer("snap")
 		end).Parent = actionHolder()
-		switchButton().Parent = actionHolder()
+		if s.canSwitch then
+			switchButton().Parent = actionHolder()
+		end
 	elseif s.phase == "live" and not userBall then
 		if s.playState == "air" then
 			hint.Text = "BALL IN THE AIR  -  run to the GOLD CIRCLE to pick it off or break it up"
 		elseif s.playState == "carry" then
 			hint.Text = "Chase the GOLD ball carrier and run into him to tackle"
 		else
-			hint.Text = "Rush the QB or cover your man  -  you'll jump to the defender nearest the ball when it's thrown"
+			hint.Text = s.canSwitch and "Rush the QB or cover your man  -  you'll jump to the defender nearest the ball when it's thrown"
+				or ("You're the %s  -  rush the QB or cover your man"):format(s.control and s.control.pos or "")
 		end
-		switchButton().Parent = actionHolder()
+		if s.canSwitch then
+			switchButton().Parent = actionHolder()
+		end
+	elseif s.phase == "presnap" and not s.canSnap then
+		-- custom games: a teammate snaps it
+		local pos = s.control and s.control.pos or ""
+		hint.Text = ("You're the %s  -  %s"):format(pos, s.play == "run" and (pos == "RB" and "you get the handoff!" or "it's a run, block!")
+			or ((pos == "OL" or pos == "TE") and "block for your QB" or "get open, your QB can throw to you"))
 	elseif s.phase == "presnap" then
-		hint.Text = s.play == "run" and "Snap it and take the handoff" or (TOUCH and "Snap it, then tap a receiver to throw" or "Snap it, then throw to a yellow ring (1-4)")
+		if s.mode == "custom" and not s.canThrow then
+			-- custom game captain (the AI plays QB): you snap it, the QB throws
+			hint.Text = ("You're the %s  -  snap it when you're set, the QB %s"):format(s.control and s.control.pos or "", s.play == "run" and "hands it off" or "throws it")
+		else
+			hint.Text = s.play == "run" and "Snap it and take the handoff" or (TOUCH and "Snap it, then tap a receiver to throw" or "Snap it, then throw to a yellow ring (1-4)")
+		end
 		UI.button({ kind = "primary", icon = "football", text = TOUCH and "SNAP" or "SNAP  [SPACE]", size = UDim2.fromOffset(TOUCH and 220 or 250, 64), textSize = 18 }, function()
 			MatchAction:FireServer("snap")
 		end).Parent = actionHolder()
-	elseif s.phase == "live" and s.playState == "dropback" and s.play ~= "run" then
+	elseif s.phase == "live" and not s.youCarry and s.mode == "custom" and not (s.canThrow and s.playState == "dropback") then
+		-- custom games: you're not the one with the ball
+		if s.playState == "air" then
+			hint.Text = "BALL IN THE AIR  -  if it's coming to you, get to the GOLD CIRCLE!"
+		elseif s.playState == "carry" then
+			hint.Text = "BLOCK for the ball carrier!"
+		else
+			hint.Text = "GET OPEN  -  your QB can throw to you (or block)"
+		end
+	elseif s.phase == "live" and s.playState == "dropback" and s.play ~= "run" and s.canThrow then
 		hint.Text = TOUCH and "THROW  -  tap a receiver  -  GREEN = open, RED = covered" or "THROW  (1-4)  -  GREEN = open, RED = covered  -  or run past the line to scramble"
 		table.clear(openChips)
 		for _, t in s.targets do
@@ -432,7 +455,7 @@ local function render()
 		finalTitle.TextColor3 = win and C.Accent or s.final.result == "Loss" and C.Red or C.Gold
 		finalPanel:FindFirstChildOfClass("UIStroke").Color = finalTitle.TextColor3
 		finalScore.Text = ("YOU %d  -  %d %s"):format(s.you, s.cpu, string.upper(s.opponent.name))
-		finalCoins.Text = ("+%d COINS%s"):format(s.final.coins, s.final.difficulty and ("  -  %s x%s"):format(s.final.difficulty, tostring(s.final.multiplier)) or "")
+		finalCoins.Text = s.mode == "custom" and "CUSTOM GAME  -  JUST FOR FUN" or ("+%d COINS%s"):format(s.final.coins, s.final.difficulty and ("  -  %s x%s"):format(s.final.difficulty, tostring(s.final.multiplier)) or "")
 		local unlocked = s.final.unlocked or {}
 		local lines = {}
 		if s.final.rating then
@@ -505,15 +528,15 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		return
 	end
 	local n = keyNumbers[input.KeyCode]
-	if input.KeyCode == Enum.KeyCode.Q and state.possession == "cpu" then
+	if input.KeyCode == Enum.KeyCode.Q and state.possession == "cpu" and state.canSwitch then
 		MatchAction:FireServer("switch")
 	elseif state.phase == "defcall" and n and MatchConfig.DefenseCalls[n] then
 		MatchAction:FireServer("defcall", MatchConfig.DefenseCalls[n].id)
 	elseif state.phase == "playcall" and n and MatchConfig.Plays[n] then
 		MatchAction:FireServer("call", MatchConfig.Plays[n].id)
-	elseif state.phase == "presnap" and input.KeyCode == Enum.KeyCode.Space then
+	elseif state.phase == "presnap" and input.KeyCode == Enum.KeyCode.Space and state.canSnap then
 		MatchAction:FireServer("snap")
-	elseif state.phase == "live" and n then
+	elseif state.phase == "live" and n and state.canThrow then
 		MatchAction:FireServer("throw", n)
 	end
 end)
