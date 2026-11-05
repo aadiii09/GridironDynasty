@@ -5,6 +5,7 @@ local ServerScriptService = game:GetService("ServerScriptService")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local Jerseys = require(ReplicatedStorage.Shared.Jerseys)
+local SettingsConfig = require(ReplicatedStorage.Shared.SettingsConfig)
 local CardDatabase = require(ServerScriptService.Modules.CardDatabase)
 local PlayerData = require(ServerScriptService.Modules.PlayerData)
 
@@ -50,6 +51,8 @@ remote("RemoteEvent", "H2HEvent")
 local SetHubSetting = remote("RemoteFunction", "SetHubSetting")
 local TutorialAction = remote("RemoteFunction", "TutorialAction")
 local TutorialDone = remote("RemoteEvent", "TutorialDone")
+local SetSetting = remote("RemoteFunction", "SetSetting")
+remote("RemoteEvent", "ReferralReward")
 
 local PackService = require(ServerScriptService.Modules.PackService)
 local LineupService = require(ServerScriptService.Modules.LineupService)
@@ -60,6 +63,8 @@ local ChallengeService = require(ServerScriptService.Modules.ChallengeService)
 local LeaderboardService = require(ServerScriptService.Modules.LeaderboardService)
 local H2HService = require(ServerScriptService.Modules.H2HService)
 local MatchServer = require(ServerScriptService.Modules.MatchServer)
+local Badges = require(ServerScriptService.Modules.Badges)
+local ReferralService = require(ServerScriptService.Modules.ReferralService)
 
 World.SetupLighting()
 local lobby = World.BuildLobby()
@@ -82,6 +87,7 @@ local function snapshotFor(player)
 		jersey = Jerseys.Get(profile.data.jersey).id,
 		difficulty = profile.data.difficulty,
 		hub = profile.data.settings and profile.data.settings.hub or {},
+		settings = SettingsConfig.Resolve(profile.data.settings and profile.data.settings.prefs),
 		h2h = profile.data.h2h,
 		tutorial = profile.data.tutorial,
 		dataVersion = CardDatabase.Version(),
@@ -138,6 +144,7 @@ PlayerData.Changed.Event:Connect(function(player)
 	if not leaderboardSynced[player] then
 		leaderboardSynced[player] = true
 		LeaderboardService.SyncTotal(player, profile.data.stats.wins)
+		Badges.CatchUp(player, profile.data) -- anything earned before badges existed
 	end
 	if not profile.data.starterGiven and not givingStarter[player.UserId] then
 		givingStarter[player.UserId] = true
@@ -198,6 +205,36 @@ SetHubSetting.OnServerInvoke = function(player, key, value)
 		data.settings.hub[key] = value
 	end)
 	return { ok = true }
+end
+
+-- Settings menu (volumes, camera shake, callouts, lobby camera) -------------------------
+local settingThrottle = {} -- [Player] = os.clock() of the last write
+game:GetService("Players").PlayerRemoving:Connect(function(player)
+	settingThrottle[player] = nil
+end)
+SetSetting.OnServerInvoke = function(player, key, value)
+	if type(key) ~= "string" or not PlayerData.Get(player) then
+		return { ok = false }
+	end
+	local clean = SettingsConfig.Clean(key, value)
+	if clean == nil then
+		return { ok = false }
+	end
+	PlayerData.Update(player, function(data)
+		data.settings = data.settings or {}
+		data.settings.prefs = data.settings.prefs or {}
+		data.settings.prefs[key] = clean
+	end)
+	-- saved with the next autosave; a quick save if they haven't changed anything for a bit
+	if not settingThrottle[player] or os.clock() - settingThrottle[player] > 20 then
+		settingThrottle[player] = os.clock()
+		task.delay(3, function()
+			if player.Parent then
+				PlayerData.SaveNow(player)
+			end
+		end)
+	end
+	return { ok = true, value = clean }
 end
 
 -- Lobby look: you stand on the hub "stage" in your team jersey, helmet and pads -------------
@@ -289,6 +326,7 @@ StoreService.Start(remotes)
 ChallengeService.Start(remotes, PackService.GrantFree)
 LeaderboardService.Start(remotes)
 H2HService.Start(remotes)
+ReferralService.Start(remotes)
 if MatchServer.IsMatchServer() then
 	task.spawn(MatchServer.Start, remotes, H2HService)
 end

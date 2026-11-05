@@ -6,7 +6,10 @@
 -- Driven by MatchUI: MatchCamera.Update(state) on every server state, Stop() when the game ends.
 
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+
+local Settings = require(ReplicatedStorage.Client.Settings)
 
 local MatchCamera = {}
 
@@ -15,6 +18,8 @@ local state = nil
 local active = false
 local lastBallPos, ballDir = nil, nil
 local UP = Vector3.new(0, 1, 0)
+local smooth = nil -- the camera's smoothed CFrame (shake is added on top, never fed back in)
+local shakeAmp, shakeUntil, shakeLength = 0, 0, 0
 
 local function flat(v)
 	return Vector3.new(v.X, 0, v.Z)
@@ -94,13 +99,33 @@ local function step(dt)
 	if not target then
 		return
 	end
-	if cam.CameraType ~= Enum.CameraType.Scriptable then
+	if cam.CameraType ~= Enum.CameraType.Scriptable or not smooth then
 		cam.CameraType = Enum.CameraType.Scriptable
-		cam.CFrame = target
+		smooth = target
 	end
 	local alpha = 1 - math.exp(-dt * speed)
-	cam.CFrame = cam.CFrame:Lerp(target, alpha)
+	smooth = smooth:Lerp(target, alpha)
+	local shake = CFrame.identity
+	local now = os.clock()
+	if now < shakeUntil then
+		local k = shakeAmp * ((shakeUntil - now) / shakeLength) ^ 2
+		shake = CFrame.new(math.noise(now * 22, 1.3) * k, math.noise(now * 22, 7.1) * k, 0)
+			* CFrame.Angles(math.noise(now * 18, 3.7) * k * 0.02, math.noise(now * 18, 5.9) * k * 0.02, math.noise(now * 18, 9.2) * k * 0.03)
+	end
+	cam.CFrame = smooth * shake
 	cam.FieldOfView = 62
+end
+
+-- A quick jolt for big hits (off in Settings -> CAMERA SHAKE)
+function MatchCamera.Shake(amount, duration)
+	if not Settings.Get("shake") then
+		return
+	end
+	local now = os.clock()
+	local left = math.max(0, shakeUntil - now)
+	shakeAmp = math.max(amount, left > 0 and shakeAmp or 0)
+	shakeLength = math.max(duration or 0.35, left)
+	shakeUntil = now + shakeLength
 end
 
 function MatchCamera.Update(newState)
@@ -117,6 +142,8 @@ function MatchCamera.Stop()
 		RunService:UnbindFromRenderStep("GridironMatchCamera")
 	end
 	state = nil
+	smooth = nil
+	shakeUntil = 0
 	local cam = workspace.CurrentCamera
 	cam.CameraType = Enum.CameraType.Custom
 	cam.FieldOfView = 70

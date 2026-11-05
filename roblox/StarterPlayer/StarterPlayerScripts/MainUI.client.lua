@@ -21,6 +21,7 @@ local CardRenderer = require(ReplicatedStorage.Client.CardRenderer)
 local UI = require(ReplicatedStorage.Client.UIKit)
 local Sounds = require(ReplicatedStorage.Client.Sounds)
 local ScreenFit = require(ReplicatedStorage.Client.ScreenFit)
+local Settings = require(ReplicatedStorage.Client.Settings)
 
 local player = Players.LocalPlayer
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
@@ -150,6 +151,37 @@ local eyeButton = UI.button({ name = "LayoutButton", kind = "dark", icon = "eye"
 	openLayoutMenu()
 end)
 eyeButton.Parent = hud
+
+local openSettings -- defined with the settings panel
+do local function build() -- gear (settings) + INVITE buttons (own function: MainUI is near Luau's 200-local limit)
+local SocialService = game:GetService("SocialService")
+local gearButton = UI.button({ name = "SettingsButton", kind = "dark", icon = "gear", iconScale = 0.62, size = UDim2.fromOffset(56, 56), anchor = Vector2.new(1, 0), position = UDim2.new(1, -322, 0, 58), radius = 14, padding = 6 }, function()
+	openSettings()
+end)
+gearButton.Parent = hud
+
+-- invite friends: Roblox's invite prompt; a friend who joins new gets Coins, and so do you
+local INVITE_REWARD = 500
+local inviteButton = UI.button({ name = "InviteButton", kind = "primary", icon = "invite", iconScale = 0.6, text = "INVITE", size = UDim2.fromOffset(150, 56), anchor = Vector2.new(1, 0), position = UDim2.new(1, -386, 0, 58), radius = 14, textSize = 16 }, function()
+	task.spawn(function()
+		local ok, can = pcall(SocialService.CanSendGameInviteAsync, SocialService, player)
+		if not ok or not can then
+			toast("Invites aren't available on your account right now", C.Red)
+			return
+		end
+		toast(("Friends who join new get %d Coins - and so do you!"):format(INVITE_REWARD), C.Gold)
+		local opts = Instance.new("ExperienceInviteOptions")
+		opts.PromptMessage = "Build your team and play me in Gridiron Dynasty!"
+		local sent = pcall(SocialService.PromptGameInvite, SocialService, player, opts)
+		if not sent then
+			toast("Couldn't open the invite window", C.Red)
+		end
+	end)
+end)
+inviteButton.Parent = hud
+local inviteChip = UI.chip("+" .. INVITE_REWARD, C.Gold, { TextColor3 = C.BG, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 6, 0, 2), ZIndex = 5 })
+inviteChip.Parent = inviteButton
+end build() end
 
 local dock = new("Frame", {
 	Name = "Dock",
@@ -1680,7 +1712,11 @@ local function renderLayoutMenu()
 	end).Parent = layoutMenu
 	UI.text({ Text = "Clean view hides both side columns. Saved to your account.", FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 11, Size = UDim2.new(1, -28, 0, 16), Position = UDim2.fromOffset(14, 236), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 91 }).Parent = layoutMenu
 end
+local settingsPanel -- the gear menu (below)
 function openLayoutMenu()
+	if settingsPanel then
+		settingsPanel.Visible = false
+	end
 	if layoutMenu.Visible then
 		layoutMenu.Visible = false
 		return
@@ -1689,6 +1725,165 @@ function openLayoutMenu()
 	layoutMenu.Visible = true
 	UI.pop(layoutMenu, 0.2)
 end
+
+
+-- =========================================================================================
+-- Settings (gear): music + effects volume, camera shake, rating callouts, lobby camera motion.
+-- Applied right away on this client, saved to your account when you let go.
+-- =========================================================================================
+local applySavedSettings -- (below, in the settings block)
+do local function build()
+local UserInputService = game:GetService("UserInputService")
+local SettingsConfig = require(ReplicatedStorage.Shared.SettingsConfig)
+settingsPanel = UI.glass({ Name = "SettingsPanel", Visible = false, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -322, 0, 122), Size = UDim2.fromOffset(380, 0), AutomaticSize = Enum.AutomaticSize.Y, ZIndex = 90 })
+settingsPanel.Parent = gui
+settingsPanel:FindFirstChildOfClass("UIStroke").Color = C.Accent
+new("UIPadding", { PaddingTop = UDim.new(0, 12), PaddingBottom = UDim.new(0, 14), PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16) }).Parent = settingsPanel
+new("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }).Parent = settingsPanel
+UI.text({ Text = "SETTINGS", FontFace = F.Display, TextScaled = false, TextSize = 22, Size = UDim2.new(1, 0, 0, 26), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 0, ZIndex = 91 }).Parent = settingsPanel
+
+local function saveSetting(key, value)
+	task.spawn(function()
+		pcall(function()
+			Remotes:WaitForChild("SetSetting"):InvokeServer(key, value)
+		end)
+	end)
+end
+
+local settingRefresh = {} -- [key] = function() redraws that row from Settings.Get
+
+local function sliderRow(def, order)
+	local row = new("Frame", { Name = def.key, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 52), LayoutOrder = order, ZIndex = 91 })
+	row.Parent = settingsPanel
+	UI.text({ Text = def.label, FontFace = F.Bold, TextScaled = false, TextSize = 14, Size = UDim2.new(1, -60, 0, 20), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 91 }).Parent = row
+	local pct = UI.text({ Text = "", FontFace = F.Number, TextColor3 = C.Accent, TextScaled = false, TextSize = 16, AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromScale(1, 0), Size = UDim2.fromOffset(60, 20), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 91 })
+	pct.Parent = row
+	-- the hit area is taller than the track so it's easy to grab on a phone
+	local hit = new("TextButton", { Name = "Track", AutoButtonColor = false, Text = "", BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 22), Size = UDim2.new(1, 0, 0, 30), ZIndex = 91 })
+	hit.Parent = row
+	local track = new("Frame", { BackgroundColor3 = C.Panel2, BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 8), ZIndex = 92 }, { UI.corner(4) })
+	track.Parent = hit
+	local fill = new("Frame", { BackgroundColor3 = C.Accent, BorderSizePixel = 0, Size = UDim2.fromScale(0.5, 1), ZIndex = 93 }, { UI.corner(4) })
+	fill.Parent = track
+	UI.flowGradient(fill, C.Accent, C.Blue, C.Accent)
+	local knob = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(22, 22), ZIndex = 94 }, {
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }),
+		UI.stroke(C.Accent, 2),
+	})
+	knob.Parent = track
+	local function draw(v)
+		fill.Size = UDim2.fromScale(v, 1)
+		knob.Position = UDim2.fromScale(v, 0.5)
+		pct.Text = v <= 0 and "OFF" or ("%d%%"):format(math.floor(v * 100 + 0.5))
+	end
+	settingRefresh[def.key] = function()
+		draw(Settings.Get(def.key))
+	end
+	local dragging = false
+	local function setFromX(x)
+		local v = math.clamp((x - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X), 0, 1)
+		v = math.floor(v * 20 + 0.5) / 20 -- 5% steps
+		Settings.Set(def.key, v)
+		draw(v)
+	end
+	hit.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			setFromX(input.Position.X)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			setFromX(input.Position.X)
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+			dragging = false
+			saveSetting(def.key, Settings.Get(def.key))
+			if def.key == "sfx" then
+				Sounds.Play("tackle", 0.7) -- hear the new effects volume
+			end
+		end
+	end)
+end
+
+local function toggleRow(def, order)
+	local row = new("TextButton", { Name = def.key, AutoButtonColor = false, Text = "", BackgroundColor3 = C.Panel2, BackgroundTransparency = 0.35, Size = UDim2.new(1, 0, 0, 52), LayoutOrder = order, ZIndex = 91 }, { UI.corner(10) })
+	row.Parent = settingsPanel
+	UI.text({ Text = def.label, FontFace = F.Bold, TextScaled = false, TextSize = 14, Position = UDim2.fromOffset(12, 7), Size = UDim2.new(1, -90, 0, 18), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 92 }).Parent = row
+	UI.text({ Text = def.desc or "", FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 12, Position = UDim2.fromOffset(12, 27), Size = UDim2.new(1, -90, 0, 16), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 92 }).Parent = row
+	local switch = new("Frame", { BackgroundColor3 = C.Stroke, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(54, 28), ZIndex = 92 }, {
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }),
+	})
+	switch.Parent = row
+	local dot = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 3, 0.5, 0), Size = UDim2.fromOffset(22, 22), ZIndex = 93 }, {
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }),
+	})
+	dot.Parent = switch
+	local function draw(on, animate)
+		local info = TweenInfo.new(animate and 0.15 or 0, Enum.EasingStyle.Quad)
+		TweenService:Create(switch, info, { BackgroundColor3 = on and C.Accent or C.Stroke }):Play()
+		TweenService:Create(dot, info, { Position = on and UDim2.new(1, -25, 0.5, 0) or UDim2.new(0, 3, 0.5, 0) }):Play()
+	end
+	settingRefresh[def.key] = function()
+		draw(Settings.Get(def.key), false)
+	end
+	row.Activated:Connect(function()
+		local on = not Settings.Get(def.key)
+		Settings.Set(def.key, on)
+		draw(on, true)
+		UI.clickSound()
+		saveSetting(def.key, on)
+	end)
+end
+
+for i, def in SettingsConfig.Order do
+	if def.kind == "slider" then
+		sliderRow(def, i)
+	else
+		toggleRow(def, i)
+	end
+end
+UI.text({ Text = "Saved to your account.", FontFace = F.Medium, TextColor3 = C.Muted, TextScaled = false, TextSize = 11, Size = UDim2.new(1, 0, 0, 14), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 99, ZIndex = 91 }).Parent = settingsPanel
+
+function openSettings()
+	layoutMenu.Visible = false
+	if settingsPanel.Visible then
+		settingsPanel.Visible = false
+		return
+	end
+	for _, refresh in settingRefresh do
+		refresh()
+	end
+	settingsPanel.Visible = true
+	UI.pop(settingsPanel, 0.2)
+end
+
+-- your saved settings, loaded once when your data first arrives (after that this client leads)
+local settingsLoaded = false
+function applySavedSettings(saved)
+	if settingsLoaded or not saved then
+		return
+	end
+	settingsLoaded = true
+	Settings.Load(saved)
+end
+
+-- friends who joined through your invite (or you joined through a friend's)
+Remotes:WaitForChild("ReferralReward").OnClientEvent:Connect(function(info)
+	if type(info) ~= "table" then
+		return
+	end
+	if info.kind == "friend" then
+		toast(("WELCOME! You joined through %s's invite: +%d Coins"):format(info.inviter or "a friend", info.coins or 0), C.Gold)
+	else
+		local names = info.friends and table.concat(info.friends, ", ") or "A friend"
+		toast(("%s joined from your invite: +%d Coins!"):format(names, info.coins or 0), C.Gold)
+	end
+	Sounds.Play("coins")
+end)
+end build() end -- settings block
 
 -- saved layout, applied once when your data arrives
 local function applyHubSettings(saved)
@@ -1750,7 +1945,8 @@ RunService.RenderStepped:Connect(function(dt)
 		cam.CameraType = Enum.CameraType.Scriptable
 		local t = os.clock()
 		local base = root.Position
-		local camPos = base + Vector3.new(math.sin(t * 0.21) * 3, 2 + math.sin(t * 0.13) * 0.4, 19)
+		local drift = Settings.Get("hubMotion") and 1 or 0
+		local camPos = base + Vector3.new(math.sin(t * 0.21) * 3 * drift, 2 + math.sin(t * 0.13) * 0.4 * drift, 19)
 		local target = CFrame.lookAt(camPos, base + Vector3.new(0, 0.6, 0))
 		camBlend = math.min(1, camBlend + dt)
 		cam.CFrame = camBlend < 0.05 and target or cam.CFrame:Lerp(target, 1 - math.exp(-dt * 4))
@@ -2547,6 +2743,8 @@ end
 -- Tutorial (first visit): a coach spotlights each step - lineup, AUTO-FILL, PLAY, ROOKIE.
 -- The first game coaches every play (MatchUI) and finishing it earns a free Starter Pack.
 -- =========================================================================================
+local maybeStartTutorial -- (tutorial block below)
+do local function build()
 local tutorialGui = new("ScreenGui", { Name = "TutorialUI", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 50, Enabled = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling })
 tutorialGui.Parent = player:WaitForChild("PlayerGui")
 local dims = {}
@@ -2690,7 +2888,7 @@ local function runTutorial()
 end
 
 local tutorialChecked = false
-local function maybeStartTutorial(inv)
+function maybeStartTutorial(inv)
 	if tutorialChecked or not inv or workspace:GetAttribute("MatchServer") then
 		return
 	end
@@ -2720,6 +2918,7 @@ end
 Remotes:WaitForChild("TutorialDone").OnClientEvent:Connect(function()
 	toast("TUTORIAL COMPLETE! Here's a free Starter Pack", C.Gold)
 end)
+end build() end -- tutorial block
 
 -- =========================================================================================
 -- Inventory sync
@@ -2736,6 +2935,7 @@ local function applyInventory(inv)
 	state.jersey = inv.jersey or state.jersey
 	state.difficulty = inv.difficulty or state.difficulty
 	applyHubSettings(inv.hub)
+	applySavedSettings(inv.settings)
 	maybeStartTutorial(inv)
 	local rating = inv.h2h and inv.h2h.rating or RankConfig.StartRating
 	local div = RankConfig.Division(rating)

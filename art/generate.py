@@ -403,6 +403,28 @@ def ic_chevron(d, s):
     d.line([(s * 0.2, s * 0.36), (s * 0.5, s * 0.66), (s * 0.8, s * 0.36)], fill="white", width=w, joint="curve")
 
 
+def ic_gear(d, s):
+    cx = cy = s / 2
+    teeth = 8
+    pts = []
+    for k in range(teeth * 4):
+        a = k * 2 * math.pi / (teeth * 4) + math.pi / (teeth * 4)
+        r = s * (0.45 if (k % 4) in (1, 2) else 0.34)
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    d.polygon(pts, fill="white")
+    r = s * 0.15
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(0, 0, 0, 0))
+
+
+def ic_invite(d, s):
+    # a person with a "+" beside them
+    d.ellipse([s * 0.14, s * 0.12, s * 0.48, s * 0.46], fill="white")
+    d.chord([s * 0.02, s * 0.5, s * 0.6, s * 1.08], 180, 360, fill="white")
+    w = int(s * 0.1)
+    d.line([(s * 0.79, s * 0.3), (s * 0.79, s * 0.66)], fill="white", width=w)
+    d.line([(s * 0.61, s * 0.48), (s * 0.97, s * 0.48)], fill="white", width=w)
+
+
 def shadow_slice():
     """Soft drop shadow for 9-slice use: 128x128, blurred rounded rect, slice center 40..88."""
     from PIL import ImageFilter
@@ -413,6 +435,147 @@ def shadow_slice():
     img = img.filter(ImageFilter.GaussianBlur(11))
     img.save(OUT / "shadow.png")
     print("  wrote shadow")
+
+
+# ----------------------------------------------------------------------------- badges
+# Roblox badge images: 512x512, shown cropped to a circle. Shapes only (no text).
+BADGES = {
+    "rookie_camp": ("2ec27e", "0f5132", "whistle"),
+    "first_win": ("3b82f6", "102a5c", "trophy"),
+    "wins_10": ("8b5cf6", "2e1065", "trophy2"),
+    "wins_50": ("f5b301", "5c3d00", "trophy3"),
+    "elite_pull": ("a855f7", "3b0764", "card"),
+    "icon_pull": ("ffd54a", "6b4a00", "cardstar"),
+    "ballhawk": ("0ea5e9", "0c2d48", "wings"),
+    "gold_div": ("eab308", "4a3500", "shield"),
+    "dynasty_div": ("ef4444", "3f0a0a", "crown"),
+    "rainbow": ("ff4fd8", "1e1b4b", "rainbow"),
+}
+
+
+def badge(key, col, dark, emblem):
+    S = 512
+    s = S * SS
+    img = canvas(S, S)
+    d = ImageDraw.Draw(img)
+    c1, c0 = hexrgb(col), hexrgb(dark)
+    # background disc: radial blend from color (upper left) to dark
+    for i in range(60, 0, -1):
+        t = i / 60
+        r = s * 0.5 * t
+        cx, cy = s * (0.5 - 0.12 * (1 - t)), s * (0.5 - 0.14 * (1 - t))
+        mix = tuple(int(c0[k] + (c1[k] - c0[k]) * (1 - t) ** 0.8) for k in range(3))
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=mix + (255,))
+    # rings
+    d.ellipse([s * 0.03, s * 0.03, s * 0.97, s * 0.97], outline=(255, 255, 255, 230), width=int(s * 0.03))
+    d.ellipse([s * 0.09, s * 0.09, s * 0.91, s * 0.91], outline=c1 + (200,), width=int(s * 0.012))
+    # rays behind the emblem (own layer so they blend instead of punching holes)
+    rays_l = canvas(S, S)
+    rd = ImageDraw.Draw(rays_l)
+    for k in range(16):
+        a = k * math.pi / 8
+        rd.polygon([(s / 2, s / 2), (s / 2 + s * 0.42 * math.cos(a - 0.07), s / 2 + s * 0.42 * math.sin(a - 0.07)),
+                   (s / 2 + s * 0.42 * math.cos(a + 0.07), s / 2 + s * 0.42 * math.sin(a + 0.07))], fill=(255, 255, 255, 26))
+    img.alpha_composite(rays_l.filter(ImageFilter.GaussianBlur(2 * SS)))
+
+    em = canvas(S, S)
+    e = ImageDraw.Draw(em)
+    W = (255, 255, 255, 255)
+
+    def trophy(scale=1.0, dy=0.0):
+        def q(x, y):
+            return (s * (0.5 + (x - 0.5) * scale), s * (0.5 + (y - 0.5) * scale + dy))
+        e.polygon([q(0.3, 0.24), q(0.7, 0.24), q(0.65, 0.5), q(0.5, 0.58), q(0.35, 0.5)], fill=W)
+        e.arc([*q(0.18, 0.26), *q(0.38, 0.46)], 90, 270, fill=W, width=int(s * 0.035 * scale))
+        e.arc([*q(0.62, 0.26), *q(0.82, 0.46)], -90, 90, fill=W, width=int(s * 0.035 * scale))
+        e.rectangle([*q(0.46, 0.56), *q(0.54, 0.68)], fill=W)
+        e.rounded_rectangle([*q(0.36, 0.68), *q(0.64, 0.76)], radius=int(s * 0.02), fill=W)
+
+    def feather(x, y, rx, ry, angle):
+        # one rounded leaf/feather (an ellipse) centered at x, y, rotated by angle degrees
+        size = int(max(rx, ry) * 2 + 8)
+        f = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        ImageDraw.Draw(f).ellipse([size / 2 - rx, size / 2 - ry, size / 2 + rx, size / 2 + ry], fill=W)
+        f = f.rotate(angle, resample=Image.BICUBIC)
+        em.alpha_composite(f, (int(x - size / 2), int(y - size / 2)))
+
+    def stars(n, y):
+        for i in range(n):
+            x = 0.5 + (i - (n - 1) / 2) * 0.12
+            e.polygon(star_pts(s * x, s * y, s * 0.045, s * 0.019), fill=W)
+
+    def card(star=False):
+        cardimg = Image.new("RGBA", (int(s * 0.36), int(s * 0.5)), (0, 0, 0, 0))
+        cd = ImageDraw.Draw(cardimg)
+        cd.rounded_rectangle([0, 0, cardimg.width - 1, cardimg.height - 1], radius=int(s * 0.04), fill=W)
+        cd.rounded_rectangle([s * 0.03, s * 0.03, cardimg.width - s * 0.03, cardimg.height - s * 0.03], radius=int(s * 0.03), outline=c0 + (255,), width=int(s * 0.012))
+        if star:
+            cd.polygon(star_pts(cardimg.width / 2, cardimg.height * 0.45, s * 0.11, s * 0.045), fill=c1 + (255,))
+        else:
+            cd.polygon([(cardimg.width / 2, cardimg.height * 0.2), (cardimg.width * 0.78, cardimg.height * 0.45),
+                        (cardimg.width / 2, cardimg.height * 0.7), (cardimg.width * 0.22, cardimg.height * 0.45)], fill=c1 + (255,))
+        cardimg = cardimg.rotate(-10, expand=True, resample=Image.BICUBIC)
+        em.alpha_composite(cardimg, (int(s / 2 - cardimg.width / 2), int(s / 2 - cardimg.height / 2)))
+
+    if emblem == "whistle":
+        e.ellipse([s * 0.26, s * 0.4, s * 0.56, s * 0.7], fill=W)
+        e.rectangle([s * 0.41, s * 0.4, s * 0.76, s * 0.52], fill=W)
+        e.ellipse([s * 0.35, s * 0.49, s * 0.47, s * 0.61], fill=(0, 0, 0, 0))
+        e.arc([s * 0.3, s * 0.22, s * 0.62, s * 0.5], 200, 300, fill=W, width=int(s * 0.02))
+    elif emblem == "trophy":
+        trophy()
+    elif emblem == "trophy2":
+        trophy(0.85, -0.04)
+        stars(2, 0.78)
+    elif emblem == "trophy3":
+        trophy(0.8, -0.06)
+        stars(3, 0.77)
+        for side in (-1, 1):  # laurel branches: leaves along an arc, pointing up
+            for k in range(5):
+                a = math.radians(115 + k * 20) if side < 0 else math.radians(65 - k * 20)
+                x, y = s / 2 + s * 0.33 * math.cos(a), s * 0.5 + s * 0.28 * math.sin(a)
+                feather(x, y, s * 0.028, s * 0.062, -math.degrees(a) - side * 25)
+    elif emblem == "card":
+        card(False)
+    elif emblem == "cardstar":
+        card(True)
+    elif emblem == "wings":
+        # a football with swept-back wings
+        for side in (-1, 1):
+            for k, t in enumerate((12, 34, 56, 78)):
+                length = s * (0.26 - k * 0.035)
+                bx, by = s / 2 + side * s * 0.13, s * 0.49
+                tr = math.radians(t)
+                cx, cy = bx + side * math.cos(tr) * length / 2, by - math.sin(tr) * length / 2
+                feather(cx, cy, s * 0.036, length / 2, (t - 90) if side > 0 else (90 - t))
+        e.ellipse([s * 0.34, s * 0.42, s * 0.66, s * 0.6], fill=W)
+        e.line([(s * 0.44, s * 0.51), (s * 0.56, s * 0.51)], fill=c0 + (255,), width=int(s * 0.016))
+        for k in range(4):
+            x = s * (0.46 + k * 0.027)
+            e.line([(x, s * 0.49), (x, s * 0.53)], fill=c0 + (255,), width=int(s * 0.01))
+    elif emblem == "shield":
+        e.polygon([(s * 0.5, s * 0.2), (s * 0.76, s * 0.3), (s * 0.72, s * 0.6), (s * 0.5, s * 0.8), (s * 0.28, s * 0.6), (s * 0.24, s * 0.3)], fill=W)
+        for k in range(2):
+            y = s * (0.42 + k * 0.12)
+            e.line([(s * 0.36, y), (s * 0.5, y + s * 0.08), (s * 0.64, y)], fill=c1 + (255,), width=int(s * 0.04), joint="curve")
+    elif emblem == "crown":
+        e.polygon([(s * 0.24, s * 0.66), (s * 0.24, s * 0.34), (s * 0.37, s * 0.48), (s * 0.5, s * 0.26), (s * 0.63, s * 0.48), (s * 0.76, s * 0.34), (s * 0.76, s * 0.66)], fill=W)
+        e.rounded_rectangle([s * 0.24, s * 0.68, s * 0.76, s * 0.76], radius=int(s * 0.02), fill=W)
+        for x in (0.37, 0.5, 0.63):
+            e.ellipse([s * (x - 0.03), s * 0.55, s * (x + 0.03), s * 0.61], fill=c1 + (255,))
+    elif emblem == "rainbow":
+        cols = ["ff3b3b", "ff9f1a", "ffe14d", "3ddc84", "3b82f6", "a855f7"]
+        for i, h in enumerate(cols):
+            r = s * (0.33 - i * 0.04)
+            e.arc([s / 2 - r, s * 0.62 - r, s / 2 + r, s * 0.62 + r], 180, 360, fill=hexrgb(h) + (255,), width=int(s * 0.04))
+        e.polygon(star_pts(s * 0.5, s * 0.55, s * 0.08, s * 0.035), fill=W)
+    # emblem drop shadow, then the emblem
+    sh = em.getchannel("A").filter(ImageFilter.GaussianBlur(8 * SS))
+    shadow = Image.new("RGBA", em.size, (0, 0, 0, 0))
+    shadow.putalpha(sh.point(lambda v: int(v * 0.55)))
+    img.alpha_composite(shadow, (0, int(6 * SS)))
+    img.alpha_composite(em)
+    finish(img, S, S, "badge_" + key)
 
 
 # ----------------------------------------------------------------------------- team logos
@@ -640,7 +803,7 @@ def main():
     print("Icons")
     for n, f in [("football", ic_football), ("packs", ic_packs), ("lineup", ic_lineup), ("collection", ic_collection),
                  ("coin", ic_coin), ("trophy", ic_trophy), ("close", ic_close), ("switch", ic_switch), ("whistle", ic_whistle), ("jersey", ic_jersey),
-                 ("eye", ic_eye), ("eyeoff", ic_eyeoff), ("chevron", ic_chevron)]:
+                 ("eye", ic_eye), ("eyeoff", ic_eyeoff), ("chevron", ic_chevron), ("gear", ic_gear), ("invite", ic_invite)]:
         icon(n, f)
     print("Plays")
     play_diagram("quick", {"WR1": [(0, 3), (-6, 8), (-12, 14)], "WR2": [(0, 6), (7, 6)], "TE": [(0, 2), (-8, 4), (-16, 4)], "RB": [(3, 1), (9, 2)]})
@@ -655,5 +818,18 @@ def main():
         team_logo(t)
 
 
+def only_new():
+    """Just the badge art and the settings/invite icons: generate.py badges"""
+    icon("gear", ic_gear)
+    icon("invite", ic_invite)
+    for key, (col, dark, emblem) in BADGES.items():
+        badge(key, col, dark, emblem)
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+    if "badges" in sys.argv:
+        only_new()
+    else:
+        main()
+        only_new()

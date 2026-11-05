@@ -17,6 +17,7 @@ local StoreConfig = require(ReplicatedStorage.Shared.StoreConfig)
 local CardDatabase = require(ServerScriptService.Modules.CardDatabase)
 local PlayerData = require(ServerScriptService.Modules.PlayerData)
 local ChallengeService = require(ServerScriptService.Modules.ChallengeService)
+local Badges = require(ServerScriptService.Modules.Badges)
 
 local PackService = {}
 
@@ -112,9 +113,13 @@ local function grant(player, pack, source)
 		data.stats.packsOpened += 1
 	end)
 	local result = { packId = pack.id, cards = {} }
+	local tiers = {}
 	for i, id in ids do
 		table.insert(result.cards, { uid = uids[i], id = id })
+		local card = CardDatabase.Get(id)
+		table.insert(tiers, card and card.tier or "")
 	end
+	Badges.AfterPack(player, tiers)
 	log(("%s opened %s (%s): %s"):format(player.Name, pack.id, source, table.concat(ids, ", ")))
 	task.spawn(ChallengeService.Record, player, { packs = 1 })
 	return result

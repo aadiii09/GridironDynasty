@@ -15,6 +15,7 @@ local MatchCamera = require(ReplicatedStorage.Client.MatchCamera)
 local MatchFX = require(ReplicatedStorage.Client.MatchFX)
 local JerseyFX = require(ReplicatedStorage.Client.JerseyFX)
 local ScreenFit = require(ReplicatedStorage.Client.ScreenFit)
+local Settings = require(ReplicatedStorage.Client.Settings)
 local TOUCH = ScreenFit.IsTouch() -- phones/tablets: tap wording, action buttons on the right
 JerseyFX.Start()
 MatchCamera.BallPosition = function()
@@ -237,7 +238,7 @@ end)
 -- callouts: floating text over a player when a rating wins a play ----------------------------
 function showCallout(model, text, colorHex)
 	local head = model and model:FindFirstChild("Head")
-	if not head then
+	if not head or not Settings.Get("callouts") then
 		return
 	end
 	local bb = Instance.new("BillboardGui")

@@ -33,3 +33,17 @@ never leaves it. Log: `private/logs/weekly_update.log`.
 - Run it now: `Start-ScheduledTask -TaskName "Gridiron Dynasty card update"`
 - Remove it: `Unregister-ScheduledTask -TaskName "Gridiron Dynasty card update" -Confirm:$false`
 - New season: change the `--season` default in `pipeline/build.py`.
+
+## Badges
+Badge milestones live in `roblox/ReplicatedStorage/Shared/BadgeConfig.lua` (first game, first win,
+10/50 wins, Elite/Icon pulls, an interception, Gold/Dynasty ranked divisions, the Rainbow jersey).
+Each starts with `id = 0` (skipped). To turn one on: Creator Hub -> your experience -> Engagement ->
+Badges -> Create, upload `art/out/badge_<key>.png`, then paste the new badge ID into its `id`.
+Players who already reached a milestone get the badge the next time they join.
+
+## Invites and settings
+- **INVITE** (top bar) opens Roblox's invite prompt. A friend who joins through it on a brand-new save
+  gets 500 Coins, and so does the inviter (right away, or the next time they join). Each inviter is
+  paid for at most 10 friends.
+- **Gear** (top bar): music and sound-effect volume, camera shake, rating callouts and lobby camera
+  motion, saved to the player's account.

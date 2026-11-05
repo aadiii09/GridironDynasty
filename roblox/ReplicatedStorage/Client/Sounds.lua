@@ -2,8 +2,11 @@
 -- All audio is from Roblox's licensed libraries (Pro Sound Effects + APM Music), free for any
 -- experience to use.
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
+
+local Settings = require(ReplicatedStorage.Client.Settings)
 
 local Sounds = {}
 
@@ -30,6 +33,24 @@ local IDS = {
 local folder = Instance.new("Folder")
 folder.Name = "GridironSounds"
 folder.Parent = SoundService
+-- volume groups for the settings menu: loops (music + crowd) and everything else
+local function group(name, volume)
+	local g = Instance.new("SoundGroup")
+	g.Name = name
+	g.Volume = volume
+	g.Parent = SoundService
+	return g
+end
+local musicGroup = group("GridironMusic", Settings.Get("music"))
+local sfxGroup = group("GridironEffects", Settings.Get("sfx"))
+Settings.Changed.Event:Connect(function(key, value)
+	if key == "music" then
+		musicGroup.Volume = value
+	elseif key == "sfx" then
+		sfxGroup.Volume = value
+	end
+end)
+
 local sounds = {}
 for name, def in IDS do
 	local s = Instance.new("Sound")
@@ -37,6 +58,7 @@ for name, def in IDS do
 	s.SoundId = "rbxassetid://" .. def[1]
 	s.Volume = def[2]
 	s.Looped = def[3] == true
+	s.SoundGroup = s.Looped and musicGroup or sfxGroup
 	s.Parent = folder
 	sounds[name] = s
 end

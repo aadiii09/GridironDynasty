@@ -36,6 +36,7 @@ local Ratings = require(ReplicatedStorage.Shared.Ratings)
 local Jerseys = require(ReplicatedStorage.Shared.Jerseys)
 local ChallengeService = require(ServerScriptService.Modules.ChallengeService)
 local LeaderboardService = require(ServerScriptService.Modules.LeaderboardService)
+local Badges = require(ServerScriptService.Modules.Badges)
 local RankConfig = require(ReplicatedStorage.Shared.RankConfig)
 
 local MatchService = {}
@@ -1804,6 +1805,8 @@ local function award(m, side, result, ratingChange)
 		if ratingChange then
 			LeaderboardService.RecordRating(player, ratingChange.new)
 		end
+		local profile = PlayerData.Get(player)
+		Badges.AfterGame(player, profile and profile.data.stats.wins or 0, t, ratingChange and ratingChange.new)
 	end
 	return {
 		result = result,

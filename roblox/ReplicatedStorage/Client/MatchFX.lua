@@ -10,6 +10,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Sounds = require(ReplicatedStorage.Client.Sounds)
+local MatchCamera = require(ReplicatedStorage.Client.MatchCamera)
 local Assets = require(ReplicatedStorage.Shared.Assets)
 
 local MatchFX = {}
@@ -362,6 +363,9 @@ local function cues(s, p)
 	-- broken tackles (TRUCKED! / JUKED! / STIFF ARM! / SPIN MOVE! / MISSED TACKLE)
 	if s.phase == "live" and msg ~= "" and msg ~= (p and p.message or "") and (msg:find("TACKLE") or msg:find("TRUCKED") or msg:find("JUKED") or msg:find("STIFF ARM") or msg:find("SPIN MOVE") or msg:find("SLIPPED") or msg:find("ESCAPED")) then
 		Sounds.Play("tackle", msg:find("TRUCKED") and 1 or 0.6, msg:find("TRUCKED") and 0.85 or 1.15)
+		if msg:find("TRUCKED") then
+			MatchCamera.Shake(0.9, 0.35)
+		end
 	end
 	-- play over
 	if s.phase == "result" and (not p or p.phase ~= "result") then
@@ -372,13 +376,16 @@ local function cues(s, p)
 			Sounds.Play(userBall and "cheer" or "groan", 1.2)
 		elseif msg:find("INTERCEPT") or msg:find("SACKED") or msg:find("FUMBLE") then
 			Sounds.Play("tackle")
+			MatchCamera.Shake(1.1, 0.45)
 			Sounds.Play(userBall and "groan" or "cheer", 0.9)
 		elseif msg:find("BIG HIT") then
 			Sounds.Play("tackle", 1.3, 0.8)
+			MatchCamera.Shake(1.4, 0.5)
 			Sounds.Play("bodyfall", 1)
 			Sounds.Play("cheer", 0.5)
 		elseif msg:find("Tackled") then
 			Sounds.Play("tackle", 1, 0.9 + math.random() * 0.2)
+			MatchCamera.Shake(0.45, 0.25)
 			Sounds.Play("bodyfall", 0.8)
 		elseif msg:find("DROPPED") or msg:find("INCOMPLETE") or msg:find("BROKEN UP") then
 			Sounds.Play(userBall and "groan" or "cheer", 0.5)
@@ -405,6 +412,7 @@ end
 
 function MatchFX.Fall()
 	Sounds.Play("tackle")
+	MatchCamera.Shake(0.8, 0.35)
 	Sounds.Play("bodyfall", 0.8)
 end
 
