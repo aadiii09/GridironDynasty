@@ -102,12 +102,15 @@ local function targetCFrame(dt)
 		local target = (live == "air" and s.air and s.air.to) or (live == "carry" and ballPos) or nil
 		if target then
 			local d = flat(target - p)
+			if d.Magnitude > MAX_FRAME then
+				d = d.Unit * MAX_FRAME -- further than that: keep you on screen, the arrow points to him
+			end
 			local along = d:Dot(h) -- + = in front of you (the normal view already sees that way)
 			local side = (d - h * along).Magnitude
 			local behind = math.max(0, -along)
 			local need = math.min(MAX_FRAME, math.sqrt(behind * behind + (side * 0.8) ^ 2) + math.max(0, along) * 0.25)
 			local k = math.clamp(need / 25, 0, 1)
-			local focus = p:Lerp(Vector3.new(target.X, p.Y, target.Z), (along >= 0 and 0.3 or 0.5) * k)
+			local focus = p + d * ((along >= 0 and 0.3 or 0.5) * k)
 			local look = (p + h * 16):Lerp(focus, k) + UP
 			return CFrame.lookAt(focus - h * (15 + need * 0.45) + UP * (9 + need * 0.6), look), 5
 		end
@@ -139,8 +142,10 @@ end
 
 -- Defense: find the ball carrier (the ball is welded to his hand), make him glow through other
 -- players, and point an arrow at him from the screen edge when he's out of view.
-local glow, arrowGui, arrow, arrowText = nil, nil, nil, nil
+local glow, arrowGui, pin, pointer, arrowText = nil, nil, nil, nil, nil
+local RED, DARK = Color3.fromRGB(235, 50, 45), Color3.fromRGB(20, 10, 10)
 
+-- a map pin: a round badge with the distance, and a square turned so one corner points at him
 local function buildArrow()
 	arrowGui = Instance.new("ScreenGui")
 	arrowGui.Name = "CarrierArrow"
@@ -148,41 +153,39 @@ local function buildArrow()
 	arrowGui.IgnoreGuiInset = true
 	arrowGui.DisplayOrder = 5
 	arrowGui.Enabled = false
-	-- a chevron made of two bars, pointing up; the holder turns it toward the carrier
-	arrow = Instance.new("Frame")
-	arrow.AnchorPoint = Vector2.new(0.5, 0.5)
-	arrow.Size = UDim2.fromOffset(44, 44)
-	arrow.BackgroundTransparency = 1
-	arrow.Parent = arrowGui
-	for _, sign in { -1, 1 } do
-		local bar = Instance.new("Frame")
-		bar.AnchorPoint = Vector2.new(0.5, 0.5)
-		bar.Size = UDim2.fromOffset(26, 7)
-		bar.Position = UDim2.new(0.5, sign * 8, 0.5, -2)
-		bar.Rotation = sign * 40
-		bar.BackgroundColor3 = Color3.fromRGB(255, 70, 60)
-		bar.BorderSizePixel = 0
-		local c = Instance.new("UICorner")
-		c.CornerRadius = UDim.new(1, 0)
-		c.Parent = bar
-		local st = Instance.new("UIStroke")
-		st.Thickness = 2
-		st.Color = Color3.fromRGB(20, 10, 10)
-		st.Parent = bar
-		bar.Parent = arrow
-	end
+	pointer = Instance.new("Frame")
+	pointer.AnchorPoint = Vector2.new(0.5, 0.5)
+	pointer.Size = UDim2.fromOffset(30, 30)
+	pointer.BackgroundColor3 = RED
+	pointer.BorderSizePixel = 0
+	local st = Instance.new("UIStroke")
+	st.Thickness = 2
+	st.Color = DARK
+	st.Parent = pointer
+	pointer.Parent = arrowGui
+	pin = Instance.new("Frame")
+	pin.AnchorPoint = Vector2.new(0.5, 0.5)
+	pin.Size = UDim2.fromOffset(52, 52)
+	pin.BackgroundColor3 = RED
+	pin.BorderSizePixel = 0
+	pin.ZIndex = 2
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(1, 0)
+	c.Parent = pin
+	local st2 = Instance.new("UIStroke")
+	st2.Thickness = 2
+	st2.Color = DARK
+	st2.Parent = pin
 	arrowText = Instance.new("TextLabel")
-	arrowText.AnchorPoint = Vector2.new(0.5, 0.5)
-	arrowText.Size = UDim2.fromOffset(70, 22)
-	arrowText.BackgroundColor3 = Color3.fromRGB(20, 10, 10)
-	arrowText.BackgroundTransparency = 0.25
+	arrowText.Size = UDim2.fromScale(1, 1)
+	arrowText.BackgroundTransparency = 1
 	arrowText.Font = Enum.Font.GothamBlack
 	arrowText.TextSize = 14
-	arrowText.TextColor3 = Color3.fromRGB(255, 255, 255)
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, 6)
-	c.Parent = arrowText
-	arrowText.Parent = arrowGui
+	arrowText.LineHeight = 0.9
+	arrowText.TextColor3 = Color3.new(1, 1, 1)
+	arrowText.ZIndex = 3
+	arrowText.Parent = pin
+	pin.Parent = arrowGui
 	arrowGui.Parent = player:WaitForChild("PlayerGui")
 end
 
@@ -238,16 +241,16 @@ local function trackCarrier(cam)
 	if dir.Magnitude < 1 then
 		dir = Vector2.new(0, 1)
 	end
-	local edge = c - Vector2.new(margin + 10, margin + 10)
+	local edge = c - Vector2.new(margin + 16, margin + 16)
 	local scale = math.min(edge.X / math.max(math.abs(dir.X), 1e-3), edge.Y / math.max(math.abs(dir.Y), 1e-3))
 	local at = c + dir * scale
-	arrow.Position = UDim2.fromOffset(at.X, at.Y)
-	arrow.Rotation = math.deg(math.atan2(dir.Y, dir.X)) + 90
-	local back = at - dir.Unit * 40
-	arrowText.Position = UDim2.fromOffset(back.X, back.Y)
+	pin.Position = UDim2.fromOffset(at.X, at.Y)
+	local tip = at + dir.Unit * 18
+	pointer.Position = UDim2.fromOffset(tip.X, tip.Y)
+	pointer.Rotation = math.deg(math.atan2(dir.Y, dir.X)) - 45 -- a corner faces him
 	local root = avatarRoot()
 	local yards = root and math.floor(flat(pos - root.Position).Magnitude / YARD + 0.5) or 0
-	arrowText.Text = yards .. " YD"
+	arrowText.Text = yards .. "\nYD"
 	arrowGui.Enabled = true
 end
 
