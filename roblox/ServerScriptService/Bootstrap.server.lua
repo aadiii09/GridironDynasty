@@ -56,6 +56,7 @@ local StoreService = require(ServerScriptService.Modules.StoreService)
 local ChallengeService = require(ServerScriptService.Modules.ChallengeService)
 local LeaderboardService = require(ServerScriptService.Modules.LeaderboardService)
 local H2HService = require(ServerScriptService.Modules.H2HService)
+local MatchServer = require(ServerScriptService.Modules.MatchServer)
 
 World.SetupLighting()
 local lobby = World.BuildLobby()
@@ -170,4 +171,7 @@ StoreService.Start(remotes)
 ChallengeService.Start(remotes, PackService.GrantFree)
 LeaderboardService.Start(remotes)
 H2HService.Start(remotes)
+if MatchServer.IsMatchServer() then
+	task.spawn(MatchServer.Start, remotes, H2HService)
+end
 PlayerData.Start()

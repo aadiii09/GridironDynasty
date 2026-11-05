@@ -39,6 +39,7 @@ local LeaderboardService = require(ServerScriptService.Modules.LeaderboardServic
 local RankConfig = require(ReplicatedStorage.Shared.RankConfig)
 
 local MatchService = {}
+MatchService.PlayerExited = Instance.new("BindableEvent") -- (player) left a game, back to the lobby
 
 local Y = MatchConfig.Yard
 local L = MatchConfig.FieldLength()
@@ -1925,6 +1926,9 @@ local function exitPlayer(m, player)
 		char:PivotTo(spawn and (spawn.CFrame + Vector3.new(0, 4, 0)) or CFrame.new(0, 10, 0))
 	end
 	fire(player, { phase = "ended" })
+	if isPlayer(player) then
+		MatchService.PlayerExited:Fire(player)
+	end
 	if next(m.humans) == nil then
 		destroyMatch(m)
 	elseif m.phase ~= "final" then

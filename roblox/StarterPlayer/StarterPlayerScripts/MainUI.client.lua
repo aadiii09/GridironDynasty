@@ -1858,8 +1858,9 @@ local function renderRankedTab(body, info)
 	end).Parent = body
 	local others = info and #info.players or 0
 	UI.text({
-		Text = searching and "Searching... you'll be matched with the closest-rated player who's looking."
-			or (others == 0 and "You're the only one in this server right now - invite a friend or try again soon." or (("%d other player%s in this server"):format(others, others == 1 and "" or "s"))),
+		Text = searching and "Searching every server... you'll be matched with the closest-rated player who's looking."
+			or ((info and info.global) and "Matches you with players in ANY server - you'll be moved to a private match server."
+			or (others == 0 and "You're the only one in this server right now - invite a friend or try again soon." or (("%d other player%s in this server"):format(others, others == 1 and "" or "s")))),
 		FontFace = F.Bold, TextColor3 = searching and C.Gold or C.Muted, TextWrapped = true, TextScaled = false, TextSize = 13, Size = UDim2.new(1, -x - 20, 0, 34), Position = UDim2.fromOffset(x, 282), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 71,
 	}).Parent = body
 end
@@ -1980,7 +1981,43 @@ local function showInvite(ev)
 	end)
 end
 
+-- full-screen status while moving between servers for a ranked game ----------------------------
+local travel = new("TextButton", { Name = "Travel", Visible = false, AutoButtonColor = false, Text = "", BackgroundColor3 = C.BG, BackgroundTransparency = 0.08, Size = UDim2.fromScale(1, 1), ZIndex = 200 })
+travel.Parent = gui
+local travelBall = UI.icon("football", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.4), Size = UDim2.fromOffset(110, 110), ImageColor3 = C.Accent, ZIndex = 201 })
+travelBall.Parent = travel
+local travelTitle = UI.text({ Text = "", FontFace = F.Display, TextScaled = false, TextSize = 46, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, -40, 0, 52), ZIndex = 201 })
+travelTitle.Parent = travel
+local travelSub = UI.text({ Text = "", FontFace = F.Bold, TextColor3 = C.Muted, TextScaled = false, TextSize = 18, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0.5, 60), Size = UDim2.new(1, -40, 0, 24), ZIndex = 201 })
+travelSub.Parent = travel
+task.spawn(function()
+	while true do
+		travelBall.Rotation = (travelBall.Rotation + 6) % 360
+		task.wait(0.03)
+	end
+end)
+local function showTravel(title, sub)
+	travelTitle.Text = title
+	travelSub.Text = sub or ""
+	travel.Visible = true
+	closePanels()
+	diffModal.Visible = false
+end
+if workspace:GetAttribute("MatchServer") then
+	showTravel(workspace:GetAttribute("MatchRanked") == false and "FRIENDLY GAME" or "RANKED GAME", "Waiting for your opponent to arrive...")
+end
+
 Remotes:WaitForChild("H2HEvent").OnClientEvent:Connect(function(ev)
+	if ev.type == "teleporting" then
+		showTravel("MATCH FOUND", ("vs %s  -  joining the match server..."):format(string.upper(ev.opponent or "PLAYER")))
+		return
+	elseif ev.type == "matchServer" then
+		showTravel(ev.ranked and "RANKED GAME" or "FRIENDLY GAME", "Waiting for your opponent to arrive...")
+		return
+	elseif ev.type == "returning" then
+		showTravel("HEADING BACK", ev.reason or "Back to the lobby...")
+		return
+	end
 	if ev.type == "queue" then
 		setSearching(ev.searching, ev)
 	elseif ev.type == "invite" then
@@ -1993,12 +2030,14 @@ Remotes:WaitForChild("H2HEvent").OnClientEvent:Connect(function(ev)
 	elseif ev.type == "declined" then
 		toast(("%s %s your challenge"):format(ev.name, ev.reason or "declined"), C.Gold)
 	elseif ev.type == "matched" then
+		travel.Visible = ev.remote == true and travel.Visible or false
 		setSearching(false)
 		diffModal.Visible = false
 		inviteModal.Visible = false
 		closePanels()
 		toast((ev.ranked and "RANKED GAME vs %s" or "FRIENDLY GAME vs %s"):format(string.upper(ev.opponent)), C.Accent)
 	elseif ev.type == "error" then
+		travel.Visible = false
 		setSearching(false)
 		toast(ev.err or "Something went wrong", C.Red)
 	end
